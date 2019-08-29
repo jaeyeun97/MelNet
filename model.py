@@ -35,8 +35,8 @@ class TimeDelayedStack(nn.Module):
         B, T, M, D = x_time.size()
 
         # Collapse the first two axes
-        time_input = x_time.transpose(1, 2).contiguous().view(-1, T, D)
-        freq_input = x_time.view(-1, M, D)
+        time_input = x_time.transpose(1, 2).contiguous().view(-1, T, D) # [B*M, T, D]
+        freq_input = x_time.view(-1, M, D) # [B*T, M, D]
 
         # Run through the rnns
         x_1, _ = self.time_rnn(time_input)
@@ -55,7 +55,7 @@ class Layer(nn.Module):
     def __init__(self, dims):
         super().__init__()
         self.freq_stack = FrequencyDelayedStack(dims)
-        self.freq_out = nn.Linear(dims, dims)
+        # self.freq_out = nn.Linear(dims, dims)
         self.time_stack = TimeDelayedStack(dims)
         self.time_out = nn.Linear(3 * dims, dims)
 
@@ -77,10 +77,10 @@ class Layer(nn.Module):
         # run through the freq delayed stack
         x_freq = self.freq_stack(x_time, x_freq)
         # reshape output TODO: is this even needed?
-        x_freq = self.freq_out(x_freq)
+        # x_freq = self.freq_out(x_freq)
         # connect the freq residual
         x_freq = x_freq + x_freq_res
-        return [x_time, x_freq]
+        return x_time, x_freq
 
 
 class MelNet(nn.Module):
@@ -97,18 +97,22 @@ class MelNet(nn.Module):
 
         # Output layer
         self.fc_out = nn.Linear(2 * dims, 3 * n_mixtures)
+        self.n_mixtures = n_mixtures
 
         # Print model size
         self.num_params()
 
     def forward(self, x):
+        # x: [B, T, M, 1]
         # Shift the inputs left for time-delay inputs
         x_time = F.pad(x, [0, 0, -1, 1, 0, 0]).unsqueeze(-1)
         # Shift the inputs down for freq-delay inputs
         x_freq = F.pad(x, [0, 0, 0, 0, -1, 1]).unsqueeze(-1)
 
         # Initial transform from 1 to dims
+        # x_time : [B, T, M, D]
         x_time = self.time_input(x_time)
+        # x_freq: [B, T, M, D]
         x_freq = self.freq_input(x_freq)
 
         # Run through the layers
@@ -117,8 +121,16 @@ class MelNet(nn.Module):
 
         # Get the mixture params
         x = torch.cat([x_time, x_freq], dim=-1)
-        params = self.fc_out(x)
-        return params
+        x = self.fc_out(x)
+        B, T, M, D = x.size()
+        x = x.reshape(B, T, M, self.n_mixtures, 3)
+        mu = x[:, :, :, :, 0]
+        sigma = torch.exp(x[:, :, :, :, 1])
+        pi = nn.functional.softmax(x[:, :, :, :, 2], dim=3)
+
+        mixtures = torch.normal(mu, sigma)
+        x = torch.mul(pi, mixtures)
+        return x.sum(dim=3)
 
     def num_params(self):
         parameters = filter(lambda p: p.requires_grad, self.parameters())
@@ -126,49 +138,24 @@ class MelNet(nn.Module):
         print('Trainable Parameters: %.3fM' % parameters)
 
 
-batchsize = 4
-timesteps = 10
-num_mels = 8
-dims = 512
-n_layers = 5
+if __name__ == '__main__':
+    batchsize = 2
+    timesteps = 80
+    num_mels = 64
+    dims = 256
+    n_layers = 12
 
-model = MelNet(dims, n_layers)
+    gpu = torch.device('cuda:0')
+    model = MelNet(dims, n_layers).to(torch.half).to(gpu)
 
-x = torch.ones(batchsize, timesteps, num_mels)
+    x = torch.ones(batchsize, timesteps, num_mels, device=gpu, dtype=torch.half)
 
-print("Input Shape:", x.shape)
+    print("Input Shape:", x.shape)
 
-y = model(x)
+    y = model(x)
 
-print("Output Shape", y.shape)
+    # 64 -> 64 -> 128 -> 128 -> 256 -> 256 # -> 512 -> 512 
+    # 80 -> 80 -> 80  -> 160 -> 160 -> 320 # -> 320 -> 640
+    # 12 -> 5  -> 4   -> 3   -> 2   -> 2
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    print("Output Shape", y.shape)
