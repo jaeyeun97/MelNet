@@ -1,161 +1,101 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
+
+from itertools import chain
+
+from network import MelNet, FeatureExtraction
+from utils import generate_splits, interleave, mdn_loss, sample
 
 
-class FrequencyDelayedStack(nn.Module):
-    def __init__(self, dims):
-        super().__init__()
-        self.rnn = nn.GRU(dims, dims, batch_first=True)
+class MelNetModel(object):
 
-    def forward(self, x_time, x_freq):
-        # sum the inputs
-        x = x_time + x_freq
-
-        # Batch, Timesteps, Mels, Dims
-        B, T, M, D = x.size()
-        # collapse the first two axes
-        x = x.view(-1, M, D)
-
-        # Through the RNN
-        x, _ = self.rnn(x)
-        return x.view(B, T, M, D)
-
-
-class TimeDelayedStack(nn.Module):
-    def __init__(self, dims):
-        super().__init__()
-        self.bi_freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.GRU(dims, dims, batch_first=True)
-
-    def forward(self, x_time):
-
-        # Batch, Timesteps, Mels, Dims
-        B, T, M, D = x_time.size()
-
-        # Collapse the first two axes
-        time_input = x_time.transpose(1, 2).contiguous().view(-1, T, D) # [B*M, T, D]
-        freq_input = x_time.view(-1, M, D) # [B*T, M, D]
-
-        # Run through the rnns
-        x_1, _ = self.time_rnn(time_input)
-        x_2_and_3, _ = self.bi_freq_rnn(freq_input)
-
-        # Reshape the first two axes back to original
-        x_1 = x_1.view(B, M, T, D).transpose(1, 2)
-        x_2_and_3 = x_2_and_3.view(B, T, M, 2 * D)
-
-        # And concatenate for output
-        x_time = torch.cat([x_1, x_2_and_3], dim=3)
-        return x_time
-
-
-class Layer(nn.Module):
-    def __init__(self, dims):
-        super().__init__()
-        self.freq_stack = FrequencyDelayedStack(dims)
-        # self.freq_out = nn.Linear(dims, dims)
-        self.time_stack = TimeDelayedStack(dims)
-        self.time_out = nn.Linear(3 * dims, dims)
-
-    def forward(self, x):
-        # unpack the input tuple
-        x_time, x_freq = x
-
-        # grab a residual for x_time
-        x_time_res = x_time
-        # run through the time delayed stack
-        x_time = self.time_stack(x_time)
-        # reshape output
-        x_time = self.time_out(x_time)
-        # connect time residual
-        x_time = x_time + x_time_res
-
-        # grab a residual for x_freq
-        x_freq_res = x_freq
-        # run through the freq delayed stack
-        x_freq = self.freq_stack(x_time, x_freq)
-        # reshape output TODO: is this even needed?
-        # x_freq = self.freq_out(x_freq)
-        # connect the freq residual
-        x_freq = x_freq + x_freq_res
-        return x_time, x_freq
-
-
-class MelNet(nn.Module):
-    def __init__(self, dims, n_layers, n_mixtures=10):
-        super().__init__()
-        # Input layers
-        self.freq_input = nn.Linear(1, dims)
-        self.time_input = nn.Linear(1, dims)
-
-        # Main layers
-        self.layers = nn.Sequential(
-            *[Layer(dims) for _ in range(n_layers)]
-        )
-
-        # Output layer
-        self.fc_out = nn.Linear(2 * dims, 3 * n_mixtures)
-        self.n_mixtures = n_mixtures
-
-        # Print model size
-        self.num_params()
-
-    def forward(self, x):
-        # x: [B, T, M, 1]
-        # Shift the inputs left for time-delay inputs
-        x_time = F.pad(x, [0, 0, -1, 1, 0, 0]).unsqueeze(-1)
-        # Shift the inputs down for freq-delay inputs
-        x_freq = F.pad(x, [0, 0, 0, 0, -1, 1]).unsqueeze(-1)
-
-        # Initial transform from 1 to dims
-        # x_time : [B, T, M, D]
-        x_time = self.time_input(x_time)
-        # x_freq: [B, T, M, D]
-        x_freq = self.freq_input(x_freq)
-
-        # Run through the layers
-        x = (x_time, x_freq)
-        x_time, x_freq = self.layers(x)
-
-        # Get the mixture params
-        x = torch.cat([x_time, x_freq], dim=-1)
-        x = self.fc_out(x)
-        B, T, M, D = x.size()
-        x = x.reshape(B, T, M, self.n_mixtures, 3)
-        mu = x[:, :, :, :, 0]
-        sigma = torch.exp(x[:, :, :, :, 1])
-        pi = nn.functional.softmax(x[:, :, :, :, 2], dim=3)
-
-        mixtures = torch.normal(mu, sigma)
-        x = torch.mul(pi, mixtures)
-        return x.sum(dim=3)
-
-    def num_params(self):
-        parameters = filter(lambda p: p.requires_grad, self.parameters())
-        parameters = sum([np.prod(p.size()) for p in parameters]) / 1_000_000
-        print('Trainable Parameters: %.3fM' % parameters)
-
-
-if __name__ == '__main__':
-    batchsize = 2
-    timesteps = 80
+    n_layers = [12, 5, 4, 3, 2, 2]
+    timestep = 80
     num_mels = 64
-    dims = 256
-    n_layers = 12
 
-    gpu = torch.device('cuda:0')
-    model = MelNet(dims, n_layers).to(torch.half).to(gpu)
+    def __init__(self, config):
+        # Store each network in main memory
+        self.config = config
+        self.device = self.config.device
 
-    x = torch.ones(batchsize, timesteps, num_mels, device=gpu, dtype=torch.half)
+        dims = self.config.width
+        n_mixtures = self.config.mixtures
 
-    print("Input Shape:", x.shape)
+        # Unconditional first
+        self.melnets = [MelNet(dims, self.n_layers[0], n_mixtures=n_mixtures)]
+        self.f_exts = []
+        # Upsample Networks
+        for n_layer in self.n_layers[1:]:
+            self.melnets.append(MelNet(dims, n_layer, n_mixtures=n_mixtures, cond=True, cond_dims=dims*4))
+            self.f_exts.append(FeatureExtraction(dims))
 
-    y = model(x)
+        if self.config.is_train:
+            self.optimizers = []
+            for i in reversed(range(len(self.n_layers))):
+                melnet = self.melnets[i]
+                f_ext = self.f_exts[i-1]
 
-    # 64 -> 64 -> 128 -> 128 -> 256 -> 256 # -> 512 -> 512 
-    # 80 -> 80 -> 80  -> 160 -> 160 -> 320 # -> 320 -> 640
-    # 12 -> 5  -> 4   -> 3   -> 2   -> 2
+                melnet.train()
+                if i != 0:
+                    f_ext.train()
 
-    print("Output Shape", y.shape)
+                # set optimizer parameters
+                self.optimizers.insert(0, self.config.optimizer(chain(melnet.parameters(), f_ext.parameters()), lr=self.config.lr))
+        else:
+            for net in chain(self.melnets, self.f_exts):
+                net.eval()
+
+    def step(self, x):
+        x = x.to(self.device)
+        x = self.config.preprocess(x)
+        # TODO: Check and fix network instead
+        x = x.transpose(1, 2)
+
+        l = len(self.n_layers)
+        splits = generate_splits(x, l)
+
+        # Run Each Network in reverse;
+        # need to do it the right way when sampling
+        # theoretically these can be parallelised
+        for i in reversed(range(l)):
+            if self.config.is_train:
+                self.optimizers[i].zero_grad()
+
+            melnet = self.melnets[i].to(self.device)
+
+            if i == 0:
+                x = next(splits)
+                mu, sigma, pi = melnet(x)
+            else:
+                f_ext = self.f_exts[i - 1].to(self.device)
+                cond, x = next(splits)
+                features = f_ext(cond)
+                mu, sigma, pi = melnet(x, features)
+
+            loss = mdn_loss(mu, sigma, pi, x)
+            if self.config.is_train:
+                loss.backward()
+                self.optimizers[i].step()
+
+            # re-move network to cpu
+            self.melnets[i] = melnet.cpu()
+
+            # TODO: store network and report loss
+
+    def sample(self):
+        cond = None
+        melnet = self.melnets[0].to(self.device)
+        timesteps = self.timesteps
+        num_mels = self.num_mels
+        for i in range(len(self.n_layers)):
+            x = torch.zeros(1, timesteps, num_mels).to(self.device)
+            melnet = self.melnets[i].to(self.device)
+            
+            for _ in range(timesteps * num_mels):
+                mu, sigma, pi = melnet(x, cond)
+                x = sample(mu, sigma, pi)
+            if i == 0:
+                cond = x
+            else:
+                cond = interleave(cond, x)
+                _, timesteps, num_mels = cond.size()
