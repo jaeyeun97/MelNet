@@ -23,6 +23,7 @@ class Config(object):
         
         parser.add_argument('--offload-dir', type=str, default=f'/tmp/{os.getpid()}/')
         parser.add_argument('--checkpoint-dir', type=str, default='./checkpoint')
+        parser.add_argument('--device', type=int, default=0)
 
         # --- Audio --- #
         parser.add_argument('--sample-rate', type=int, default=22050)
@@ -47,7 +48,7 @@ class Config(object):
 
         # --- Network --- #
         # Network width
-        parser.add_argument('--width', type=int, default=512)
+        parser.add_argument('--width', type=int, default=256)
         # Number of mixtures
         parser.add_argument('--mixtures', type=int, default=10)
 
@@ -58,6 +59,11 @@ class Config(object):
     def initvars(self):
         self.config['optimizer'] = get_optimizer(self.config['optimizer'])
         preprocesses = []
+
+        if self.config['device'] < 0:
+            self.config['device'] = torch.device('cpu')
+        else:
+            self.config['device'] = torch.device('cuda', self.config['device'])
 
         if self.config['spectrogram'] == 'mel_stft':
             if self.config['win_length'] is None:
@@ -74,13 +80,13 @@ class Config(object):
         self.config['preprocess'] = Compose(preprocesses)
 
     def __getitem__(self, name):
-        return self.config['name']
+        return self.config[name]
 
     def __setitem__(self, name, value):
         self.config[name] = value
 
     def __getattr__(self, name):
-        return self.config['name']
+        return self.config[name]
 
     def __repr__(self):
         return pprint.pformat(self.config)
