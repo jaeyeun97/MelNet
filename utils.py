@@ -3,11 +3,13 @@ import torch
 
 def mdn_loss(mu, sigma, pi, target):
     dist = torch.distributions.normal.Normal(mu, sigma)
-    return -dist.log_prob(target.unsqueeze(-1)).exp().mul(pi).sum(dim=-1).log().mean()
+    logits = dist.log_prob(target.unsqueeze(-1))
+    probs = torch.exp(logits + pi)
+    return -probs.sum(dim=-1).log().mean()
 
 
 def sample(mu, sigma, pi):
-    cat = torch.distributions.categorical.Categorical(pi) 
+    cat = torch.distributions.categorical.Categorical(logits=pi) 
     dist = torch.distributions.normal.Normal(mu, sigma)
     idx = cat.sample().unsqueeze(-1)
     norms = dist.sample()

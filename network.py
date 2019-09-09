@@ -5,6 +5,7 @@ import numpy as np
 
 from layers import Layer
 
+
 class FeatureExtraction(nn.Module):
     def __init__(self, dims):
         super().__init__()
@@ -12,8 +13,8 @@ class FeatureExtraction(nn.Module):
         self.time_input = nn.Linear(1, dims)
         self.freq_input = nn.Linear(1, dims)
 
-        self.freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+        self.freq_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
+        self.time_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         x = x.unsqueeze(-1)
@@ -102,7 +103,7 @@ class MelNet(nn.Module):
         x = x.reshape(B, T, M, self.n_mixtures, 3)
         mu = x[:, :, :, :, 0]
         sigma = torch.exp(x[:, :, :, :, 1])
-        pi = nn.functional.softmax(x[:, :, :, :, 2], dim=3) 
+        pi = nn.functional.log_softmax(x[:, :, :, :, 2], dim=3)
         return mu, sigma, pi
 
     def num_params(self):
