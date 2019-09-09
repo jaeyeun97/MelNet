@@ -37,7 +37,7 @@ class Maestro(data.Dataset):
         #     self.counter = {}
 
     def __getitem__(self, index):
-        idx = self.meta.where(self.meta.frame_cumsum < index).last_valid_index()
+        idx = self.meta.where(self.meta.frame_cumsum <= index).last_valid_index()
         offset = self.meta.frame_cumsum.iloc[idx] if idx is not None else 0
         idx = idx if idx is not None else -1
         record = self.meta.iloc[idx + 1]
@@ -45,9 +45,10 @@ class Maestro(data.Dataset):
         start = (index - offset) * self.frame_length / self.sample_rate
         # end = start + self.frame_length
 
-        return librosa.load(record.filename, sr=self.sample_rate,
-                            offset=start/self.sample_rate,
-                            duration=self.duration)
+        y, sr = librosa.load(record.filename, sr=self.sample_rate,
+                             offset=start,
+                             duration=self.duration)
+        return librosa.util.fix_length(y, self.frame_length)
 
         # if idx not in self.cache.keys():
         #     # open file, resample, and store the numpy array
@@ -70,5 +71,13 @@ class Maestro(data.Dataset):
 if __name__ == "__main__":
     manager = Manager()
     dataset = Maestro('../maestro-v2.0.0', 319 * 1025, sample_rate=22050, split='train', manager=manager)
-    print(dataset[0])
-    print(dataset[1])
+
+    l = []
+    for i in range(5):
+        l.append(dataset[i])
+    d1 = np.concatenate(l)
+    record = dataset.meta.iloc[0]
+    d2, sr = librosa.load(record.filename, offset=0, duration=dataset.duration*5)
+    print(np.power(d1 - d2, 2).mean())
+    print(dataset[record.frame_cumsum])
+    print(librosa.load(dataset.meta.iloc[1].filename, offset=0, duration=dataset.duration))
