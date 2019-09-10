@@ -104,6 +104,7 @@ class MelNet(nn.Module):
         mu = x[:, :, :, :, 0]
         sigma = torch.exp(x[:, :, :, :, 1])
         pi = nn.functional.log_softmax(x[:, :, :, :, 2], dim=3)
+        # pi = nn.functional.softmax(x[:, :, :, :, 2], dim=3)
         return mu, sigma, pi
 
     def num_params(self):

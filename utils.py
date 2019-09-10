@@ -4,12 +4,15 @@ import torch
 def mdn_loss(mu, sigma, pi, target):
     dist = torch.distributions.normal.Normal(mu, sigma)
     logits = dist.log_prob(target.unsqueeze(-1))
-    probs = torch.exp(logits + pi)
-    return -probs.sum(dim=-1).log().mean()
+    # probs = torch.exp(logits + pi)
+    # probs = logits.exp().mul(pi)
+    probs = torch.logsumexp(logits + pi, -1)
+    return -probs.mean()
 
 
 def sample(mu, sigma, pi):
     cat = torch.distributions.categorical.Categorical(logits=pi) 
+    # cat = torch.distributions.categorical.Categorical(probs=pi) 
     dist = torch.distributions.normal.Normal(mu, sigma)
     idx = cat.sample().unsqueeze(-1)
     norms = dist.sample()

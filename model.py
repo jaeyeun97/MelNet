@@ -1,12 +1,13 @@
+import os
 import torch
-import torch.nn as nn
 
+from torchvision.transforms import Compose
 from itertools import chain
+from datetime import datetime
 
 from network import MelNet, FeatureExtraction
 from utils import generate_splits, interleave, mdn_loss, sample
 from audio import MelScale, Spectrogram
-from torchvision.transforms import Compose
 
 
 class MelNetModel(object):
@@ -34,23 +35,34 @@ class MelNetModel(object):
             self.melnets.append(MelNet(dims, n_layer, n_mixtures=n_mixtures, cond=True, cond_dims=dims*4).to(self.dtype))
             self.f_exts.append(FeatureExtraction(dims).to(self.dtype))
 
+        # Initialize Optimizers
         if self.config.mode == 'train':
             self.optimizers = []
             for i in reversed(range(len(self.n_layers))):
-                melnet = self.melnets[i]  
-                melnet.train()
-
+                melnet = self.melnets[i]
                 if i != 0:
                     f_ext = self.f_exts[i-1]
-                    f_ext.train()
-
-                it = melnet.parameters() if i == 0 else chain(melnet.parameters(), f_ext.parameters())
+                it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
                 self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr))
+
+        if self.config.load_iter != 0:
+            self.load_networks(it=self.config.load_iter)
+        elif self.config.load_epoch != 0:
+            self.load_networks(epoch=self.config.load_epoch)
+        elif self.config.load_timestamp != 0:
+            self.load_networks(timestamp=self.config.load_timestamp)
+        elif self.config.mode != 'train':
+            raise Exception('Load Network for Validation, Testing, or Sampling')
+
+        if self.config.mode == 'train':
+            for net in chain(self.melnets, self.f_exts):
+                net.train()
         else:
             for net in chain(self.melnets, self.f_exts):
                 net.eval()
 
     def setup_preprocess(self):
+        # Allow this to be run CPU or GPU
         self.preprocess = Compose([
             Spectrogram(n_fft=self.config['n_fft'],
                         win_length=self.config['win_length'],
@@ -70,6 +82,7 @@ class MelNetModel(object):
         x = self.preprocess(x)
 
         splits = generate_splits(x, self.scale_count)
+        losses = []
 
         # Run Each Network in reverse;
         # need to do it the right way when sampling
@@ -89,6 +102,7 @@ class MelNetModel(object):
                 features = f_ext(cond)
                 mu, sigma, pi = melnet(x, features)
 
+            # Gradient clipping
             loss = mdn_loss(mu, sigma, pi, x)
 
             if self.config.mode == 'train':
@@ -97,9 +111,9 @@ class MelNetModel(object):
 
             # re-move network to cpu
             self.melnets[i] = melnet.cpu()
+            losses.append(float(loss))
 
-            # TODO: store network and report loss
-            print(loss)
+        return tuple(losses)
 
     def sample(self):
         cond = None
@@ -125,6 +139,44 @@ class MelNetModel(object):
                 axis = not axis
         return x
 
+    def save_networks(self, epoch=0, it=0):
+        now = datetime.now()
+        timestamp = datetime.timestamp(now)
+
+        if it != 0:
+            name = f'iter_{it}'
+        elif epoch != 0:
+            name = f'epoch_{epoch}'
+        else:
+            name = f'time_{int(timestamp)}'
+
+        data = {'epoch': epoch, 'timestamp': timestamp}
+        for i in range(len(self.n_layers)):
+            if i != 0:
+                data[f'f_ext_{i}'] = self.f_exts[i - 1].state_dict()
+            data[f'melnet_{i}'] = self.melnets[i].state_dict()
+            data[f'optimizer_{i}'] = self.optimizers[i].state_dict()
+        torch.save(data, os.path.join(self.config.checkpoint_dir, f'{name}.pth'))
+
+    def load_networks(self, epoch=0, it=0, timestamp=0):
+        if it != 0:
+            name = f'iter_{it}'
+        elif epoch != 0:
+            name = f'epoch_{epoch}'
+        else:
+            name = f'time_{timestamp}'
+
+        checkpoint = torch.load(os.path.join(self.config.checkpoint_dir, f'{name}.pth'))
+        for i in range(len(self.n_layers)):
+            if i != 0:
+                self.f_exts[i - 1].load_state_dict(checkpoint[f'f_ext_{i}'])
+            self.melnets[i].load_state_dict(checkpoint[f'melnet_{i}'])
+            self.optimizers[i].load_state_dict(checkpoint[f'optimizer_{i}'])
+
+        epoch = checkpoint['epoch']
+        time = str(datetime.fromtimestamp(checkpoint['timestamp']))
+        print(f"Loading Network from Epoch {epoch} at {time}")
+
 
 if __name__ == "__main__":
     from config import Config
@@ -134,7 +186,8 @@ if __name__ == "__main__":
     import librosa
     x, sr = librosa.load(librosa.util.example_audio_file(),
                          sr=config.sample_rate,
-                         duration=config.hop_length * 319 / config.sample_rate)
+                         duration=config.hop_length * 255 / config.sample_rate)
     x = torch.from_numpy(x).unsqueeze(0)
+    print(x.size())
     for _ in range(20):
         model.step(x)

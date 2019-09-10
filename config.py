@@ -3,10 +3,14 @@ import argparse
 import pprint
 import torch
 
+from adabound import AdaBound
+
 
 def get_optimizer(optimizer_name='Adam'):
     """Get optimizer by name"""
     # optimizer_name = optimizer_name.capitalize()
+    if optimizer_name == 'AdaBound':
+        return AdaBound
     return getattr(torch.optim, optimizer_name)
 
 
@@ -15,13 +19,17 @@ class Config(object):
         # TODO: from JSON file
         parser = argparse.ArgumentParser()
         parser.add_argument('--dataset', type=str, default='maestro', help='Which dataset to use: [maestro | musicnet]')
-        parser.add_argument('--dataroot', type=str, default='./dataset', help='parent directory of datasets')
-        parser.add_argument('--mode', type=str, default='train', help='[train | val | test | sample]')
+        parser.add_argument('--dataroot', type=str, required=True, help='parent directory of datasets')
+        parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
 
-        parser.add_argument('--offload-dir', type=str, default=f'/tmp/{os.getpid()}/')
+        # parser.add_argument('--offload-dir', type=str, default=f'/tmp/{os.getpid()}/')
         parser.add_argument('--checkpoint-dir', type=str, default='./checkpoint')
         parser.add_argument('--device', type=int, default=0)
-        parser.add_argument('--dtype', type=str, default='half')
+        parser.add_argument('--dtype', type=str, default='float')
+
+        parser.add_argument('--load-iter', type=int, default=0)
+        parser.add_argument('--load-epoch', type=int, default=0)
+        parser.add_argument('--load-timestamp', type=int, default=0)
 
         # --- Audio --- #
         parser.add_argument('--sample-rate', type=int, default=22050)
@@ -35,11 +43,17 @@ class Config(object):
         parser.add_argument('--n-mels', type=int, default=256)
         parser.add_argument('--win-length', type=int, default=None)
         parser.add_argument('--hop-length', type=int, default=None)
+        parser.add_argument('--timesteps', type=int, default=256)
 
         # --- Mode Specific --- #
-        if opt.mode == 'train':
+        if opt.mode != 'sample':
             parser.add_argument('--batch-size', type=int, default=1)
-            parser.add_argument('--start', type=int, default=0)
+            parser.add_argument('--num-workers', type=int, default=4)
+            parser.add_argument('--shuffle', action='store_true')
+
+        if opt.mode == 'train': 
+            parser.add_argument('--iter-interval', type=int, default=2000)
+            parser.add_argument('--epoch-interval', type=int, default=1)
             parser.add_argument('--epochs', type=int, default=200)
             parser.add_argument('--optimizer', type=str, default='SGD')
             parser.add_argument('--lr', type=float, default=1e-3)
@@ -69,6 +83,8 @@ class Config(object):
 
         if self.config['hop_length'] is None:
             self.config['hop_length'] = self.config['n_fft'] // 4
+
+        self.config['frame_length'] = self.config['hop_length'] * (self.config['timesteps'] - 1)
 
     def __getitem__(self, name):
         return self.config[name]

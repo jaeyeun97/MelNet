@@ -17,7 +17,8 @@ class Maestro(data.Dataset):
 
         meta = meta.where(meta.split == split).dropna()
         audio_filenames = meta.audio_filename.map(lambda name: os.path.join(root, name))
-        num_frames = np.ceil(meta.duration * sample_rate / frame_length).astype(int)
+        # Do not use data that is mainly silence
+        num_frames = np.round(meta.duration * sample_rate / frame_length).astype(int)
 
         self.frame_length = frame_length
         self.sample_rate = sample_rate
@@ -26,8 +27,12 @@ class Maestro(data.Dataset):
         self.meta = pandas.DataFrame({
             'filename': audio_filenames,
             'frame_nums': num_frames,
-            'frame_cumsum': num_frames.cumsum()
+            'frame_cumsum': num_frames.cumsum().shift(1, fill_value=0)
         })
+        # meta['filename'] = audio_filenames
+        # meta['frame_nums'] = num_frames
+        # meta['frame_cumsum'] = num_frames.cumsum()
+        # self.meta = meta
 
         # if manager is not None:
         #     self.cache = manager.dict()
@@ -38,9 +43,8 @@ class Maestro(data.Dataset):
 
     def __getitem__(self, index):
         idx = self.meta.where(self.meta.frame_cumsum <= index).last_valid_index()
-        offset = self.meta.frame_cumsum.iloc[idx] if idx is not None else 0
-        idx = idx if idx is not None else -1
-        record = self.meta.iloc[idx + 1]
+        record = self.meta.loc[idx]
+        offset = record.frame_cumsum
 
         start = (index - offset) * self.frame_length / self.sample_rate
         # end = start + self.frame_length
@@ -81,3 +85,4 @@ if __name__ == "__main__":
     print(np.power(d1 - d2, 2).mean())
     print(dataset[record.frame_cumsum])
     print(librosa.load(dataset.meta.iloc[1].filename, offset=0, duration=dataset.duration))
+    print(dataset[570])
