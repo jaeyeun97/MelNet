@@ -50,14 +50,16 @@ class Config(object):
             parser.add_argument('--batch-size', type=int, default=1)
             parser.add_argument('--num-workers', type=int, default=4)
             parser.add_argument('--shuffle', action='store_true')
+            parser.add_argument('--dataset-size', type=int, default=4000)
+            parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
 
-        if opt.mode == 'train': 
-            parser.add_argument('--epoch-size', type=int, default=4000)
+        if opt.mode == 'train':
             parser.add_argument('--iter-interval', type=int, default=2000)
             parser.add_argument('--epoch-interval', type=int, default=1)
             parser.add_argument('--epochs', type=int, default=200)
             parser.add_argument('--optimizer', type=str, default='SGD')
             parser.add_argument('--lr', type=float, default=1e-3)
+            parser.add_argument('--grad-clip', type=float, default=5.)
 
         # --- Network --- #
         # Network width
@@ -75,7 +77,7 @@ class Config(object):
         if self.config['device'] < 0:
             self.config['device'] = torch.device('cpu')
         else:
-            self.config['device'] = torch.device('cuda', self.config['device'])
+            self.config['device'] = torch.device('cuda', self.config['device']) 
 
         self.config['dtype'] = getattr(torch, self.config['dtype'])
 

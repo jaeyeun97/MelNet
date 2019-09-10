@@ -3,16 +3,18 @@ from torch.utils.data import DataLoader
 from maestro import Maestro
 
 
-def get_dataloader(config):
+def get_dataset(config, mode, size, preprocess=None):
     if config.dataset == 'maestro':
         dataset = Maestro(config.dataroot, config.frame_length,
-                          epoch_size=config.epoch_size,
-                          sample_rate=config.sample_rate,
-                          split=config.mode)
+                          size=size, sample_rate=config.sample_rate,
+                          split=mode, preprocess=preprocess)
     else:
         raise NotImplementedError()
 
-    print(f"Dataset size: {len(dataset)}")
+    return dataset
+
+
+def get_dataloader(config, dataset):
     loader = DataLoader(dataset,
                         batch_size=config.batch_size,
                         num_workers=config.num_workers,

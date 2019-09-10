@@ -1,20 +1,16 @@
 import os
 import torch
 
-from torchvision.transforms import Compose
 from itertools import chain
 from datetime import datetime
 
 from network import MelNet, FeatureExtraction
 from utils import generate_splits, interleave, mdn_loss, sample
-from audio import MelScale, Spectrogram
 
 
 class MelNetModel(object):
 
     n_layers = [12, 5, 4, 3, 2, 2]
-    timesteps = 80
-    num_mels = 64
     scale_count = len(n_layers) - 2
 
     def __init__(self, config):
@@ -22,10 +18,10 @@ class MelNetModel(object):
         self.config = config
         self.device = self.config.device
         self.dtype = self.config.dtype
+        self.preprocess = None
 
         dims = self.config.width
         n_mixtures = self.config.mixtures
-        self.setup_preprocess()
 
         # Unconditional first
         self.melnets = [MelNet(dims, self.n_layers[0], n_mixtures=n_mixtures).to(self.dtype)]
@@ -43,43 +39,24 @@ class MelNetModel(object):
                 if i != 0:
                     f_ext = self.f_exts[i-1]
                 it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
-                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr))
+                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr))  # , momentum=0.9)) 
 
-        if self.config.load_iter != 0:
-            self.load_networks(it=self.config.load_iter)
-        elif self.config.load_epoch != 0:
-            self.load_networks(epoch=self.config.load_epoch)
-        elif self.config.load_timestamp != 0:
-            self.load_networks(timestamp=self.config.load_timestamp)
-        elif self.config.mode != 'train':
-            raise Exception('Load Network for Validation, Testing, or Sampling')
+    def train(self):
+        for net in chain(self.melnets, self.f_exts):
+            net.train()
 
-        if self.config.mode == 'train':
-            for net in chain(self.melnets, self.f_exts):
-                net.train()
-        else:
-            for net in chain(self.melnets, self.f_exts):
-                net.eval()
+    def eval(self):
+        for net in chain(self.melnets, self.f_exts):
+            net.eval()
 
-    def setup_preprocess(self):
-        # Allow this to be run CPU or GPU
-        self.preprocess = Compose([
-            Spectrogram(n_fft=self.config['n_fft'],
-                        win_length=self.config['win_length'],
-                        hop_length=self.config['hop_length'],
-                        normalized=True,
-                        dtype=self.dtype,
-                        device=self.device),
-            MelScale(sample_rate=self.config['sample_rate'],
-                     n_fft=self.config['n_fft'],
-                     n_mels=self.config['n_mels'],
-                     dtype=self.dtype,
-                     device=self.device)
-        ])
+    def set_preprocess(self, preprocess):
+        self.preprocess = preprocess
 
     def step(self, x):
         x = x.to(dtype=self.dtype, device=self.device)
-        x = self.preprocess(x)
+
+        if self.preprocess is not None:
+            x = self.preprocess(x)
 
         splits = generate_splits(x, self.scale_count)
         losses = []
@@ -108,7 +85,7 @@ class MelNetModel(object):
             if self.config.mode == 'train':
                 loss.backward()
                 it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
-                torch.nn.utils.clip_grad_norm_(it, 5)
+                torch.nn.utils.clip_grad_norm_(it, self.config.grad_clip)
                 self.optimizers[i].step()
 
             # re-move network to cpu
@@ -120,8 +97,8 @@ class MelNetModel(object):
     def sample(self):
         cond = None
         melnet = self.melnets[0].to(self.device)
-        timesteps = self.timesteps
-        num_mels = self.num_mels
+        timesteps = self.config.n_mel * 2 // self.scale_count
+        num_mels =  self.config.timesteps * 2 // self.scale_count
         axis = False
         for i in range(len(self.n_layers)):
             x = torch.zeros(1, timesteps, num_mels).to(self.device)
@@ -183,12 +160,12 @@ class MelNetModel(object):
 if __name__ == "__main__":
     from config import Config
     config = Config()
-    model = MelNetModel(config) 
+    model = MelNetModel(config)
 
     import librosa
     x, sr = librosa.load(librosa.util.example_audio_file(),
                          sr=config.sample_rate,
-                         duration=config.hop_length * 255 / config.sample_rate)
+                         duration=config.frame_length / config.sample_rate)
     x = torch.from_numpy(x).unsqueeze(0)
     print(x.size())
     for _ in range(20):

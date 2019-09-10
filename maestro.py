@@ -2,13 +2,16 @@ import os
 import pandas
 import numpy as np
 import librosa
+import torch
 
 from torch.utils import data
 from torch.multiprocessing import Manager
 
 
 class Maestro(data.Dataset):
-    def __init__(self, root, frame_length, sample_rate=22050, split='train', epoch_size=4000, manager=None):
+    def __init__(self, root, frame_length,
+                 sample_rate=22050, split='train', size=4000,
+                 manager=None, preprocess=None):
         super().__init__()
 
         name = os.path.basename(root)
@@ -22,6 +25,7 @@ class Maestro(data.Dataset):
 
         self.frame_length = frame_length
         self.sample_rate = sample_rate
+        self.preprocess = preprocess
         self.duration = self.frame_length / self.sample_rate
         self.meta = pandas.DataFrame({
             'filename': audio_filenames,
@@ -29,7 +33,7 @@ class Maestro(data.Dataset):
             'frame_cumsum': num_frames.cumsum().shift(1, fill_value=0)
         })
 
-        self.size = min(num_frames.sum(), epoch_size)
+        self.size = min(num_frames.sum(), size)
         # meta['filename'] = audio_filenames
         # meta['frame_nums'] = num_frames
         # meta['frame_cumsum'] = num_frames.cumsum()
@@ -50,10 +54,16 @@ class Maestro(data.Dataset):
         start = (index - offset) * self.frame_length / self.sample_rate
         # end = start + self.frame_length
 
-        y, sr = librosa.load(record.filename, sr=self.sample_rate,
-                             offset=start,
-                             duration=self.duration)
-        return librosa.util.fix_length(y, self.frame_length)
+        y, _ = librosa.load(record.filename, sr=self.sample_rate,
+                            offset=start,
+                            duration=self.duration)
+        y = librosa.util.fix_length(y, self.frame_length)
+
+        if self.preprocess is not None:
+            y = torch.from_numpy(y)
+            y = self.preprocess(y)
+
+        return y
 
         # if idx not in self.cache.keys():
         #     # open file, resample, and store the numpy array
