@@ -107,6 +107,8 @@ class MelNetModel(object):
 
             if self.config.mode == 'train':
                 loss.backward()
+                it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
+                torch.nn.utils.clip_grad_norm_(it, 5)
                 self.optimizers[i].step()
 
             # re-move network to cpu

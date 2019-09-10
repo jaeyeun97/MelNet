@@ -52,6 +52,7 @@ class Config(object):
             parser.add_argument('--shuffle', action='store_true')
 
         if opt.mode == 'train': 
+            parser.add_argument('--epoch-size', type=int, default=4000)
             parser.add_argument('--iter-interval', type=int, default=2000)
             parser.add_argument('--epoch-interval', type=int, default=1)
             parser.add_argument('--epochs', type=int, default=200)

@@ -8,7 +8,7 @@ from torch.multiprocessing import Manager
 
 
 class Maestro(data.Dataset):
-    def __init__(self, root, frame_length, sample_rate=22050, split='train', manager=None):
+    def __init__(self, root, frame_length, sample_rate=22050, split='train', epoch_size=4000, manager=None):
         super().__init__()
 
         name = os.path.basename(root)
@@ -23,12 +23,13 @@ class Maestro(data.Dataset):
         self.frame_length = frame_length
         self.sample_rate = sample_rate
         self.duration = self.frame_length / self.sample_rate
-        self.size = num_frames.sum()
         self.meta = pandas.DataFrame({
             'filename': audio_filenames,
             'frame_nums': num_frames,
             'frame_cumsum': num_frames.cumsum().shift(1, fill_value=0)
         })
+
+        self.size = min(num_frames.sum(), epoch_size)
         # meta['filename'] = audio_filenames
         # meta['frame_nums'] = num_frames
         # meta['frame_cumsum'] = num_frames.cumsum()

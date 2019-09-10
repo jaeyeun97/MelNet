@@ -6,6 +6,7 @@ from maestro import Maestro
 def get_dataloader(config):
     if config.dataset == 'maestro':
         dataset = Maestro(config.dataroot, config.frame_length,
+                          epoch_size=config.epoch_size,
                           sample_rate=config.sample_rate,
                           split=config.mode)
     else:
