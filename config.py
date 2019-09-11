@@ -54,6 +54,7 @@ class Config(object):
             parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
 
         if opt.mode == 'train':
+            parser.add_argument('--time-interval', type=int, default=20)
             parser.add_argument('--iter-interval', type=int, default=2000)
             parser.add_argument('--epoch-interval', type=int, default=1)
             parser.add_argument('--epochs', type=int, default=200)

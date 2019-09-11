@@ -9,12 +9,12 @@ from layers import Layer
 class FeatureExtraction(nn.Module):
     def __init__(self, dims):
         super().__init__()
-        # Is this needed? Might we just take the dimensional output of the previoius network?
+        # Is this needed? Might we just take the dimensional output of the previous network?
         self.time_input = nn.Linear(1, dims)
         self.freq_input = nn.Linear(1, dims)
 
-        self.freq_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
+        self.freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+        self.time_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         x = x.unsqueeze(-1)

@@ -71,7 +71,7 @@ class Executor(object):
         for epoch in range(self.config.load_epoch + 1, self.config.epochs + 1):
             for batch, x in enumerate(dataloader):
                 # Timer
-                if batch % 5 == 0:
+                if batch % self.config.time_interval == 0:
                     new_t = time.time()
                     if t is not None:
                         print(f"Time executed: {new_t - t}")

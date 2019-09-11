@@ -39,7 +39,7 @@ class MelNetModel(object):
                 if i != 0:
                     f_ext = self.f_exts[i-1]
                 it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
-                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr))  # , momentum=0.9)) 
+                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr)) # , momentum=0.9)) 
 
     def train(self):
         for net in chain(self.melnets, self.f_exts):
