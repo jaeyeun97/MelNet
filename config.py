@@ -16,20 +16,34 @@ def get_optimizer(optimizer_name='Adam'):
 
 class Config(object):
     def __init__(self):
-        # TODO: from JSON file
         parser = argparse.ArgumentParser()
+
+        parser.add_argument('name', type=str)
+        parser.add_argument('--load-iter', type=int, default=0)
+        parser.add_argument('--load-epoch', type=int, default=0)
+
+        opt, _ = parser.parse_known_args()
+
+        if opt.load_iter == 0 and opt.load_epoch == 0:
+            self.new_config(parser)
+            new_config = True
+        else:
+            new_config = False
+
+        args = parser.parse_args()
+        self.config = vars(args)
+        self.initvars(new_config)
+
+    def new_config(self, parser):
         parser.add_argument('--dataset', type=str, default='maestro', help='Which dataset to use: [maestro | musicnet]')
         parser.add_argument('--dataroot', type=str, required=True, help='parent directory of datasets')
         parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
 
         # parser.add_argument('--offload-dir', type=str, default=f'/tmp/{os.getpid()}/')
-        parser.add_argument('--checkpoint-dir', type=str, default='./checkpoint')
+        parser.add_argument('--run-dir', type=str, default='./runs')
+        parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints')
         parser.add_argument('--device', type=int, default=0)
         parser.add_argument('--dtype', type=str, default='float')
-
-        parser.add_argument('--load-iter', type=int, default=0)
-        parser.add_argument('--load-epoch', type=int, default=0)
-        parser.add_argument('--load-timestamp', type=int, default=0)
 
         # --- Audio --- #
         parser.add_argument('--sample-rate', type=int, default=22050)
@@ -60,19 +74,23 @@ class Config(object):
             parser.add_argument('--epochs', type=int, default=200)
             parser.add_argument('--optimizer', type=str, default='SGD')
             parser.add_argument('--lr', type=float, default=1e-3)
-            parser.add_argument('--grad-clip', type=float, default=5.)
+            parser.add_argument('--grad-clip', type=float, default=0.)
 
         # --- Network --- #
         # Network width
         parser.add_argument('--width', type=int, default=256)
         # Number of mixtures
-        parser.add_argument('--mixtures', type=int, default=10)
+        parser.add_argument('--mixtures', type=int, default=10) 
 
-        args = parser.parse_args()
-        self.config = vars(args)
-        self.initvars()
+    def initvars(self, new_config):
+        self.config['run_dir'] = os.path.join(self.config['run_dir'],
+                                              self.config['name'])
+        self.config['checkpoint_dir'] = os.path.join(self.config['checkpoint_dir'],
+                                                     self.config['name'])
 
-    def initvars(self):
+        if not new_config:
+            return
+
         self.config['optimizer'] = get_optimizer(self.config['optimizer'])
 
         if self.config['device'] < 0:
@@ -89,6 +107,15 @@ class Config(object):
             self.config['hop_length'] = self.config['n_fft'] // 4
 
         self.config['frame_length'] = self.config['hop_length'] * (self.config['timesteps'] - 1)
+
+    def load_config(self, config):
+        if isinstance(config, Config):
+            self.config = config.config
+        else:
+            self.config = config
+
+    def get_config(self):
+        return self.config
 
     def __getitem__(self, name):
         return self.config[name]

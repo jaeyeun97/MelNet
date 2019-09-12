@@ -57,9 +57,25 @@ def generate_splits(x, count):
         axis = not axis
     yield x
 
+
 if __name__ == "__main__":
+    import librosa
     n_layers = [12, 5, 4, 3, 2, 2]
-    x = torch.ones(1, 256, 320)
-    splits = generate_splits(x, len(n_layers) - 2)
-    for s in splits:
-        print(', '.join(str(t.size()) for t in s))
+    x, sr = librosa.load(librosa.util.example_audio_file())
+    hop_length = 1536 // 4
+    x = x[:255 * hop_length]
+    x = librosa.feature.melspectrogram(x, sr, n_fft=1536, hop_length=hop_length, n_mels=256)
+    x = torch.from_numpy(x)
+    x = x.transpose(0, 1).unsqueeze(0)
+    
+    print(x.size())
+    splits = list(generate_splits(x, len(n_layers) - 2))
+    splits = list(reversed(splits))
+
+    axis = False
+    for i in range(1, len(splits) - 1):
+        print(', '.join(str(t.size()) for t in splits[i]))
+        x, y = splits[i]
+        o = interleave(x, y, axis)
+        assert (o - splits[i+1][0]).sum() == 0
+        axis = not axis

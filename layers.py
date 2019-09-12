@@ -5,7 +5,7 @@ import torch.nn as nn
 class FrequencyDelayedStack(nn.Module):
     def __init__(self, dims):
         super().__init__()
-        self.rnn = nn.GRU(dims, dims, batch_first=True)
+        self.rnn = nn.LSTM(dims, dims, batch_first=True)
 
     def forward(self, x_time, x_freq):
         # sum the inputs
@@ -24,8 +24,8 @@ class FrequencyDelayedStack(nn.Module):
 class TimeDelayedStack(nn.Module):
     def __init__(self, dims):
         super().__init__()
-        self.bi_freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.GRU(dims, dims, batch_first=True)
+        self.bi_freq_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
+        self.time_rnn = nn.LSTM(dims, dims, batch_first=True)
 
     def forward(self, x_time):
 

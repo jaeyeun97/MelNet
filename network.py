@@ -13,8 +13,8 @@ class FeatureExtraction(nn.Module):
         self.time_input = nn.Linear(1, dims)
         self.freq_input = nn.Linear(1, dims)
 
-        self.freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+        self.freq_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
+        self.time_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
 
     def forward(self, x):
         x = x.unsqueeze(-1)
