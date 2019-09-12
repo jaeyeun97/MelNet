@@ -3,14 +3,14 @@ import torch
 from itertools import chain
 
 from network import MelNet, FeatureExtraction
-from utils import generate_splits, interleave, mdn_loss, sample
+from utils import generate_splits, interleave, mdn_loss, sample, get_grad_info
 
 
 class MelNetModel(object):
 
     # n_layers = [8, 5, 4, 3, 2, 2]
     # n_layers = [16, 6, 5, 4]
-    n_layers = [12, 4, 3, 2]
+    n_layers = [12, 6, 4, 2]
     scale_count = len(n_layers) - 2
 
     def __init__(self, config):
@@ -60,6 +60,7 @@ class MelNetModel(object):
 
         splits = generate_splits(x, self.scale_count)
         losses = []
+        grad_infos = []
 
         # Run Each Network in reverse;
         # need to do it the right way when sampling
@@ -83,17 +84,30 @@ class MelNetModel(object):
 
             if self.config.mode == 'train':
                 loss.backward()
-                it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
+
+                # Gradient logging
+                if i == 0:
+                    grad_info = get_grad_info(melnet)
+                else:
+                    grad_info = get_grad_info(f_ext, melnet)
+
+                # Gradient Clipping
                 if self.config.grad_clip > 0:
+                    if i == 0:
+                        it = melnet.parameters()
+                    else:
+                        it = chain(f_ext.parameters(), melnet.parameters())
                     torch.nn.utils.clip_grad_norm_(it, self.config.grad_clip)
                 self.optimizers[i].step()
-            # torch.cuda.empty_cache()
 
-            losses.insert(0, float(loss))
             # re-move network to cpu
             self.melnets[i] = melnet.cpu()
+            if i != 0:
+                self.f_exts[i-1] = f_ext.cpu()
+            losses.insert(0, loss.item())
+            grad_infos.insert(0, grad_info)
 
-        return tuple(losses)
+        return losses, grad_infos
 
     def sample(self):
         cond = None

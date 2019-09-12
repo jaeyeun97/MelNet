@@ -4,10 +4,14 @@ import os
 
 from datetime import datetime
 from torchvision.transforms import Compose
+# from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from data import get_dataset, get_dataloader
 from model import MelNetModel
 from audio import MelScale, Spectrogram
+from utils import get_grad_plot
 
 
 class Executor(object):
@@ -39,23 +43,27 @@ class Executor(object):
         else:
             checkpoint = None
             self.epoch = 1
-            self.iteration = 1
+            self.iteration = (self.epoch - 1) * config.dataset_size + 1
 
         self.model = MelNetModel(config)
         self.model.load_networks(checkpoint)
         self.config = config
 
-    def save_model(self, epoch, it=0):
+    def save_model(self, it=False):
         now = datetime.now()
         timestamp = datetime.timestamp(now)
 
-        if it != 0:
-            name = f'iter_{it}'
+        if it:
+            name = f'iter_{self.iteration}'
         else:
-            name = f'epoch_{epoch}'
-            it = 1
+            name = f'epoch_{self.epoch}'
 
-        data = {'config': self.config.get_config(), 'epoch': epoch, 'iteration': it, 'timestamp': timestamp}
+        data = {
+                'config': self.config.get_config(),
+                'epoch': self.epoch,
+                'iteration': self.iteration,
+                'timestamp': timestamp
+            }
         checkpoint = self.model.save_networks()
         data.update(checkpoint)
         torch.save(data, os.path.join(self.config.checkpoint_dir, f'{name}.pth'))
@@ -105,10 +113,15 @@ class Executor(object):
         # Get Dataloader
         dataloader = self.get_data('train')
 
-        # TODO i should be self.iteration
-        i = (self.epoch - 1) * self.config.dataset_size + 1
         t = None
-        for epoch in range(self.epoch, self.config.epochs + 1):
+        start = self.epoch
+        writer = SummaryWriter(self.config.run_dir)
+        writing_executor = ThreadPoolExecutor(max_workers=4)
+        futures = dict()
+
+        for epoch in range(start, self.config.epochs + 1):
+            self.epoch = epoch
+
             for batch, x in enumerate(dataloader):
                 # Timer
                 if batch % self.config.time_interval == 0:
@@ -117,22 +130,49 @@ class Executor(object):
                         print(f"Time executed: {new_t - t}")
                     t = new_t
 
-                losses = self.model.step(x)
+                losses, grad_infos = self.model.step(x)
 
-                # TODO: log to file and only print progress
-                print("Epoch %s\tBatch %s\t%s" % (epoch, batch, '\t'.join(str(l) for l in losses)))
+                # Logging Loss
+                for i, l in enumerate(losses):
+                    writer.add_scalar(f'loss/{i+1}', l, self.iteration)
 
-                if i % self.config.iter_interval == 0:
-                    print(f"Storing network for iter {i}")
-                    self.save_model(epoch, it=i)
-                i += 1
+                # Gradient Flow
+                if (self.iteration - 1) % 10 == 0:
+                    for i, grad_info in enumerate(grad_infos):
+                        future = writing_executor.submit(get_grad_plot, grad_info)
+                        futures[future] = (self.iteration, i)
 
-            # Run test
+                    done, _ = wait(futures, timeout=0.2, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        it, net = futures[future]
+                        try:
+                            image = future.result()
+                        except TimeoutError:
+                            print('TimeoutError, no need to be too upset')
+                        except Exception as exc:
+                            print(f'Image for network {net} at iteration {it} returned exception: {exc}')
+                        else:
+                            del futures[future]
+                            writer.add_image(f'gradient {net+1}', image, it)
+
+                if self.iteration % self.config.iter_interval == 0:
+                    print(f"Storing network for iteration {self.iteration}")
+                    self.save_model(True)
+
+                if epoch == start and batch == 0:
+                    print('Training Started')
+
+                self.iteration += 1
+
+            # TODO: Run test
             # self.test(mode='validation')
             # Store Network on epoch intervals
             if epoch % self.config.epoch_interval == 0:
                 print(f"Storing network for epoch {epoch}")
-                self.save_model(epoch)
+                self.save_model()
+
+        writer.close()
+        writing_executor.shutdown(wait=True)
 
     def test(self, mode='test'):
         self.model.eval()
@@ -150,4 +190,6 @@ class Executor(object):
     def sample(self):
         sample = self.model.sample()
         # TODO store the sample
+        # generate spectrogram
+        # Postprocess
         return sample

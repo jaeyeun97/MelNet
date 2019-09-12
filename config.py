@@ -40,7 +40,7 @@ class Config(object):
         parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
 
         # parser.add_argument('--offload-dir', type=str, default=f'/tmp/{os.getpid()}/')
-        parser.add_argument('--run-dir', type=str, default='./runs')
+        parser.add_argument('--run-dir', type=str, default='/tmp/melnet')
         parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints')
         parser.add_argument('--device', type=int, default=0)
         parser.add_argument('--dtype', type=str, default='float')

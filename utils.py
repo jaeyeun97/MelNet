@@ -1,4 +1,59 @@
 import torch
+import matplotlib.pyplot as plt
+import numpy as np
+
+from matplotlib.lines import Line2D
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from torch.utils.tensorboard.writer import figure_to_image
+
+
+def is_bad_grad(grad):
+    return grad.ne(grad).any() or grad.gt(1e6).any()
+
+
+def get_grad_info(*networks):
+    labels = list()
+    # is_bads = list()
+    avg_grads = list()
+    max_grads = list()
+    for network in networks:
+        for n, p in network.named_parameters():
+            if p.requires_grad and "bias" not in n:
+                grad = p.grad
+                labels.append(n)
+                # is_bads.append(is_bad_grad(grad))
+                grad = grad.abs()
+                avg_grads.append(grad.mean().item())
+                max_grads.append(grad.max().item())
+    return labels, avg_grads, max_grads
+
+
+def get_grad_plot(grad_info):
+    labels, avg_grads, max_grads = grad_info
+    fig = Figure(figsize=(15, 5))
+    canvas = FigureCanvas(fig)
+    ax = fig.gca()
+    ax.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+    ax.bar(np.arange(len(max_grads)), avg_grads, alpha=0.1, lw=1, color="b")
+    ax.hlines(0, 0, len(avg_grads)+1, lw=2, color="k")
+    ax.set_xticks(range(0, len(avg_grads), 1))
+    ax.set_xticklabels(labels, rotation="vertical")
+    ax.set_xlim(left=0, right=len(avg_grads))
+    # plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
+    ax.set_yscale('log')
+    ax.set_xlabel("Layers")
+    ax.set_ylabel("Average Gradient")
+    # ax.grid(True)
+    ax.legend([Line2D([0], [0], color="c", lw=4),
+               Line2D([0], [0], color="b", lw=4),
+               Line2D([0], [0], color="k", lw=4)],
+              ['max-gradient', 'mean-gradient', 'zero-gradient']) 
+    canvas.draw()
+    data = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
+    w, h = canvas.get_width_height()
+    image_hwc = data.reshape([h, w, 4])[:, :, 0:3]
+    return np.moveaxis(image_hwc, source=2, destination=0)
 
 
 def mdn_loss(mu, sigma, pi, target):
