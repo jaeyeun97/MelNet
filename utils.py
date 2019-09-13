@@ -1,11 +1,9 @@
 import torch
-import matplotlib.pyplot as plt
 import numpy as np
 
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-from torch.utils.tensorboard.writer import figure_to_image
 
 
 def is_bad_grad(grad):
@@ -31,7 +29,7 @@ def get_grad_info(*networks):
 
 def get_grad_plot(grad_info):
     labels, avg_grads, max_grads = grad_info
-    fig = Figure(figsize=(15, 5))
+    fig = Figure(figsize=(12, 8), dpi=96)
     canvas = FigureCanvas(fig)
     ax = fig.gca()
     ax.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
@@ -49,6 +47,7 @@ def get_grad_plot(grad_info):
                Line2D([0], [0], color="b", lw=4),
                Line2D([0], [0], color="k", lw=4)],
               ['max-gradient', 'mean-gradient', 'zero-gradient']) 
+    fig.subplots_adjust(bottom=0.2)
     canvas.draw()
     data = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
     w, h = canvas.get_width_height()

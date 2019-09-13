@@ -53,7 +53,7 @@ class Layer(nn.Module):
     def __init__(self, dims):
         super().__init__()
         self.freq_stack = FrequencyDelayedStack(dims)
-        # self.freq_out = nn.Linear(dims, dims)
+        self.freq_out = nn.Linear(dims, dims)
         self.time_stack = TimeDelayedStack(dims)
         self.time_out = nn.Linear(3 * dims, dims)
 
@@ -75,7 +75,7 @@ class Layer(nn.Module):
         # run through the freq delayed stack
         x_freq = self.freq_stack(x_time, x_freq)
         # reshape output TODO: is this even needed?
-        # x_freq = self.freq_out(x_freq)
+        x_freq = self.freq_out(x_freq)
         # connect the freq residual
         x_freq = x_freq + x_freq_res
         return x_time, x_freq

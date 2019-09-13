@@ -69,10 +69,10 @@ class MelNet(nn.Module):
         self.num_params()
 
     def condition(self, x_time, x_freq, c):
-        c_time = F.pad(c, [0, 0, -1, 1, 0, 0])
-        c_freq = F.pad(c, [0, 0, 0, 0, -1, 1])
-        c_time = self.cond_time(c_time)
-        c_freq = self.cond_freq(c_freq)
+        # c_time = F.pad(c, [0, 0, -1, 1, 0, 0])
+        # c_freq = F.pad(c, [0, 0, 0, 0, -1, 1])
+        # c_time = self.cond_time(c_time)
+        # c_freq = self.cond_freq(c_freq)
         return c_time + x_time, c_freq + x_freq
 
     def forward(self, x, c=None):

@@ -153,7 +153,7 @@ class Executor(object):
                             print(f'Image for network {net} at iteration {it} returned exception: {exc}')
                         else:
                             del futures[future]
-                            writer.add_image(f'gradient {net+1}', image, it)
+                            writer.add_image(f'gradient/{net+1}', image, it)
 
                 if self.iteration % self.config.iter_interval == 0:
                     print(f"Storing network for iteration {self.iteration}")
