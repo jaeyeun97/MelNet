@@ -4,17 +4,20 @@ import torch.nn.functional as F
 import numpy as np
 
 from layers import Layer
+from utils import clip_grad
 
 
 class FeatureExtraction(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, dims, hook):
         super().__init__()
         # Is this needed? Might we just take the dimensional output of the previous network?
         self.time_input = nn.Linear(1, dims)
         self.freq_input = nn.Linear(1, dims)
 
-        self.freq_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
+        self.freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+        self.time_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+
+        self.hook = hook
 
     def forward(self, x):
         x = x.unsqueeze(-1)
@@ -27,11 +30,15 @@ class FeatureExtraction(nn.Module):
 
         # Collapse the first two axes
         x_time = x_time.transpose(1, 2).contiguous().view(-1, T, D)  # [B*M, T, D]
-        x_freq = x_freq.view(-1, M, D)  # [B*T, M, D] 
+        x_freq = x_freq.view(-1, M, D)  # [B*T, M, D]
 
         # Run through the rnns
         x_time, _ = self.time_rnn(x_time)
         x_freq, _ = self.freq_rnn(x_freq)
+
+        if self.hook:
+            x_time.register_hook(self.hook)
+            x_freq.register_hook(self.hook)
 
         # Reshape the first two axes back to original
         x_time = x_time.view(B, M, T, 2 * D).transpose(1, 2)
@@ -45,20 +52,21 @@ class FeatureExtraction(nn.Module):
 
 
 class MelNet(nn.Module):
-    def __init__(self, dims, n_layers, n_mixtures=10, cond=False, cond_dims=1):
+    def __init__(self, dims, n_layers, n_mixtures=10, hook=None, cond=False, cond_dims=1):
         super().__init__()
         # Input layers
         self.freq_input = nn.Linear(1, dims)
         self.time_input = nn.Linear(1, dims)
 
         if cond:
+            # Paper states that there are two condition networks: W^t_z, W^f_z
             self.cond_freq = nn.Linear(cond_dims, dims)
             self.cond_time = nn.Linear(cond_dims, dims)
         self.cond = cond
 
         # Main layers
         self.layers = nn.Sequential(
-            *[Layer(dims) for _ in range(n_layers)]
+            *[Layer(dims, hook) for _ in range(n_layers)]
         )
 
         # Output layer
@@ -67,13 +75,6 @@ class MelNet(nn.Module):
 
         # Print model size
         self.num_params()
-
-    def condition(self, x_time, x_freq, c):
-        # c_time = F.pad(c, [0, 0, -1, 1, 0, 0])
-        # c_freq = F.pad(c, [0, 0, 0, 0, -1, 1])
-        # c_time = self.cond_time(c_time)
-        # c_freq = self.cond_freq(c_freq)
-        return c_time + x_time, c_freq + x_freq
 
     def forward(self, x, c=None):
         # x: [B, T, M]
@@ -90,7 +91,10 @@ class MelNet(nn.Module):
         x_freq = self.freq_input(x_freq)
 
         if self.cond:
-            x_time, x_freq = self.condition(x_time,  x_freq, c)
+            c_freq = self.cond_freq(c)
+            c_time = self.cond_time(c)
+            x_freq = x_freq + c_freq
+            x_time = x_time + c_time
 
         # Run through the layers
         x = (x_time, x_freq)

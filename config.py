@@ -14,90 +14,102 @@ def get_optimizer(optimizer_name='Adam'):
     return getattr(torch.optim, optimizer_name)
 
 
+def argparse_dict(arg):
+    result = dict()
+    for s in arg.split(','):
+        pairs = s.split('=')
+        result[pairs[0]] = float(pairs[1])
+    return result
+
+
 class Config(object):
     def __init__(self):
-        parser = argparse.ArgumentParser()
+        self.parser = argparse.ArgumentParser()
 
-        parser.add_argument('name', type=str)
-        parser.add_argument('--load-iter', type=int, default=0)
-        parser.add_argument('--load-epoch', type=int, default=0)
+        self.parser.add_argument('name', type=str)
+        self.parser.add_argument('--run-dir', type=str, default='/tmp/melnet')
+        self.parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints')
+        self.parser.add_argument('--load-iter', type=int, default=0)
+        self.parser.add_argument('--load-epoch', type=int, default=0)
+        self.parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
+        self.parser.add_argument('--device', type=int, default=0)
 
-        opt, _ = parser.parse_known_args()
+        opt, _ = self.parser.parse_known_args()
+
+        # --- Mode Specific --- #
+
+        if opt.mode != 'sample':
+            self.parser.add_argument('--batch-size', type=int, default=1)
+            self.parser.add_argument('--num-workers', type=int, default=4)
+            self.parser.add_argument('--shuffle', action='store_true')
+            self.parser.add_argument('--log-grad', action='store_true')
+            self.parser.add_argument('--dataset-size', type=int, default=4000)
+            self.parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
+
+        if opt.mode == 'train':
+            self.parser.add_argument('--dataset', type=str, default='maestro', help='Which dataset to use: [maestro | musicnet]')
+            self.parser.add_argument('--dataroot', type=str, required=True, help='parent directory of datasets')
+            self.parser.add_argument('--time-interval', type=int, default=20)
+            self.parser.add_argument('--iter-interval', type=int, default=2000)
+            self.parser.add_argument('--epoch-interval', type=int, default=1)
+            self.parser.add_argument('--epochs', type=int, default=200)
 
         if opt.load_iter == 0 and opt.load_epoch == 0:
-            self.new_config(parser)
+            self.new_config()
             new_config = True
         else:
             new_config = False
 
-        args = parser.parse_args()
+        args = self.parser.parse_args()
         self.config = vars(args)
         self.initvars(new_config)
 
-    def new_config(self, parser):
-        parser.add_argument('--dataset', type=str, default='maestro', help='Which dataset to use: [maestro | musicnet]')
-        parser.add_argument('--dataroot', type=str, required=True, help='parent directory of datasets')
-        parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
-
+    def new_config(self): 
         # parser.add_argument('--offload-dir', type=str, default=f'/tmp/{os.getpid()}/')
-        parser.add_argument('--run-dir', type=str, default='/tmp/melnet')
-        parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints')
-        parser.add_argument('--device', type=int, default=0)
-        parser.add_argument('--dtype', type=str, default='float')
+        self.parser.add_argument('--dtype', type=str, default='float')
 
         # --- Audio --- #
-        parser.add_argument('--sample-rate', type=int, default=22050)
+        self.parser.add_argument('--sample-rate', type=int, default=22050)
         # TODO: implement CQT measures
         # parser.add_argument('--spectrogram', type=str, default='mel_stft', help='[mel_stft | cqt]')
 
-        opt, _ = parser.parse_known_args()
+        opt, _ = self.parser.parse_known_args()
 
         # --- Mel-STFT specific --- #
-        parser.add_argument('--n-fft', type=int, default=2048)
-        parser.add_argument('--n-mels', type=int, default=256)
-        parser.add_argument('--win-length', type=int, default=None)
-        parser.add_argument('--hop-length', type=int, default=None)
-        parser.add_argument('--timesteps', type=int, default=256)
-
-        # --- Mode Specific --- #
-        if opt.mode != 'sample':
-            parser.add_argument('--batch-size', type=int, default=1)
-            parser.add_argument('--num-workers', type=int, default=4)
-            parser.add_argument('--shuffle', action='store_true')
-            parser.add_argument('--dataset-size', type=int, default=4000)
-            parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
+        self.parser.add_argument('--n-fft', type=int, default=2048)
+        self.parser.add_argument('--n-mels', type=int, default=256)
+        self.parser.add_argument('--win-length', type=int, default=None)
+        self.parser.add_argument('--hop-length', type=int, default=None)
+        self.parser.add_argument('--timesteps', type=int, default=256)
 
         if opt.mode == 'train':
-            parser.add_argument('--time-interval', type=int, default=20)
-            parser.add_argument('--iter-interval', type=int, default=2000)
-            parser.add_argument('--epoch-interval', type=int, default=1)
-            parser.add_argument('--epochs', type=int, default=200)
-            parser.add_argument('--optimizer', type=str, default='SGD')
-            parser.add_argument('--lr', type=float, default=1e-3)
-            parser.add_argument('--grad-clip', type=float, default=0.)
+            self.parser.add_argument('--optimizer', type=str, default='SGD')
+            self.parser.add_argument('--lr', type=float, default=1e-3)
+            self.parser.add_argument('--optargs', type=argparse_dict, default={})
+            self.parser.add_argument('--grad-clip', type=float, default=0.)
+            self.parser.add_argument('--grad-scale', type=float, default=0.)
 
         # --- Network --- #
         # Network width
-        parser.add_argument('--width', type=int, default=256)
+        self.parser.add_argument('--n-layers', nargs='+', type=int, default=[14, 6, 5, 4])
+        self.parser.add_argument('--width', type=int, default=256)
         # Number of mixtures
-        parser.add_argument('--mixtures', type=int, default=10) 
+        self.parser.add_argument('--mixtures', type=int, default=10)
 
     def initvars(self, new_config):
-        self.config['run_dir'] = os.path.join(self.config['run_dir'],
-                                              self.config['name'])
-        self.config['checkpoint_dir'] = os.path.join(self.config['checkpoint_dir'],
-                                                     self.config['name'])
-
-        if not new_config:
-            return
-
-        self.config['optimizer'] = get_optimizer(self.config['optimizer'])
-
         if self.config['device'] < 0:
             self.config['device'] = torch.device('cpu')
         else:
             self.config['device'] = torch.device('cuda', self.config['device']) 
 
+        self.config['run_dir'] = os.path.join(self.config['run_dir'],
+                                              self.config['name'])
+        self.config['checkpoint_dir'] = os.path.join(self.config['checkpoint_dir'],
+                                                     self.config['name'])
+        if not new_config:
+            return
+
+        self.config['optimizer'] = get_optimizer(self.config['optimizer']) 
         self.config['dtype'] = getattr(torch, self.config['dtype'])
 
         if self.config['win_length'] is None:
@@ -110,9 +122,13 @@ class Config(object):
 
     def load_config(self, config):
         if isinstance(config, Config):
-            self.config = config.config
+            d = config.config
         else:
-            self.config = config
+            d = config
+
+        for k in d.keys():
+            if k not in self.config or self.config[k] != d[k]:
+                self.config[k] = d[k]
 
     def get_config(self):
         return self.config

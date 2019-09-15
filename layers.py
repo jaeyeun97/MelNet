@@ -3,9 +3,10 @@ import torch.nn as nn
 
 
 class FrequencyDelayedStack(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, dims, hook=None):
         super().__init__()
-        self.rnn = nn.LSTM(dims, dims, batch_first=True)
+        self.rnn = nn.GRU(dims, dims, batch_first=True)
+        self.hook = hook
 
     def forward(self, x_time, x_freq):
         # sum the inputs
@@ -18,14 +19,17 @@ class FrequencyDelayedStack(nn.Module):
 
         # Through the RNN
         x, _ = self.rnn(x)
+        if self.hook:
+            x.register_hook(self.hook)
         return x.view(B, T, M, D)
 
 
 class TimeDelayedStack(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, dims, hook=None):
         super().__init__()
-        self.bi_freq_rnn = nn.LSTM(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.LSTM(dims, dims, batch_first=True)
+        self.bi_freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+        self.time_rnn = nn.GRU(dims, dims, batch_first=True)
+        self.hook = hook
 
     def forward(self, x_time):
 
@@ -40,6 +44,10 @@ class TimeDelayedStack(nn.Module):
         x_1, _ = self.time_rnn(time_input)
         x_2_and_3, _ = self.bi_freq_rnn(freq_input)
 
+        if self.hook:
+            x_1.register_hook(self.hook)
+            x_2_and_3.register_hook(self.hook)
+
         # Reshape the first two axes back to original
         x_1 = x_1.view(B, M, T, D).transpose(1, 2)
         x_2_and_3 = x_2_and_3.view(B, T, M, 2 * D)
@@ -50,11 +58,11 @@ class TimeDelayedStack(nn.Module):
 
 
 class Layer(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, dims, hook=None):
         super().__init__()
-        self.freq_stack = FrequencyDelayedStack(dims)
+        self.freq_stack = FrequencyDelayedStack(dims, hook)
         self.freq_out = nn.Linear(dims, dims)
-        self.time_stack = TimeDelayedStack(dims)
+        self.time_stack = TimeDelayedStack(dims, hook)
         self.time_out = nn.Linear(3 * dims, dims)
 
     def forward(self, x):

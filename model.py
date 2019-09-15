@@ -3,33 +3,39 @@ import torch
 from itertools import chain
 
 from network import MelNet, FeatureExtraction
-from utils import generate_splits, interleave, mdn_loss, sample, get_grad_info
+from utils import generate_splits, interleave, mdn_loss, sample, get_grad_info, clip_grad
 
 
 class MelNetModel(object):
 
-    # n_layers = [8, 5, 4, 3, 2, 2]
-    # n_layers = [16, 6, 5, 4]
-    n_layers = [12, 6, 4, 2]
-    scale_count = len(n_layers) - 2
-
     def __init__(self, config):
         # Store each network in main memory
         self.config = config
+        self.n_layers = self.config.n_layers
+        self.scale_count = len(self.n_layers) - 1
         self.device = self.config.device
         self.dtype = self.config.dtype
         self.preprocess = None
 
         dims = self.config.width
         n_mixtures = self.config.mixtures
+        if config.grad_clip > 0:
+            hook = clip_grad(config.grad_clip)
+        else:
+            hook = None
 
         # Unconditional first
-        self.melnets = [MelNet(dims, self.n_layers[0], n_mixtures=n_mixtures).to(self.dtype)]
+        self.melnets = [MelNet(dims, self.n_layers[0],
+                               n_mixtures=n_mixtures,
+                               hook=hook).to(self.dtype)]
         self.f_exts = []
         # Upsample Networks
         for n_layer in self.n_layers[1:]:
-            self.melnets.append(MelNet(dims, n_layer, n_mixtures=n_mixtures, cond=True, cond_dims=dims*4).to(self.dtype))
-            self.f_exts.append(FeatureExtraction(dims).to(self.dtype))
+            self.melnets.append(MelNet(dims, n_layer,
+                                       n_mixtures=n_mixtures,
+                                       cond=True, cond_dims=dims*4,
+                                       hook=hook).to(self.dtype))
+            self.f_exts.append(FeatureExtraction(dims, hook=hook).to(self.dtype))
 
         # Initialize Optimizers
         if self.config.mode == 'train':
@@ -39,7 +45,7 @@ class MelNetModel(object):
                 if i != 0:
                     f_ext = self.f_exts[i-1]
                 it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
-                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr, momentum=0.9))
+                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr, **self.config.optargs))
 
     def train(self):
         for net in chain(self.melnets, self.f_exts):
@@ -85,25 +91,32 @@ class MelNetModel(object):
             if self.config.mode == 'train':
                 loss.backward()
 
-                # Gradient logging
-                if i == 0:
-                    grad_info = get_grad_info(melnet)
-                else:
-                    grad_info = get_grad_info(f_ext, melnet)
-
                 # Gradient Clipping
                 if self.config.grad_clip > 0:
                     if i == 0:
                         it = melnet.parameters()
                     else:
                         it = chain(f_ext.parameters(), melnet.parameters())
-                    torch.nn.utils.clip_grad_norm_(it, self.config.grad_clip)
+                    torch.nn.utils.clip_grad_value_(it, self.config.grad_clip)
+
+                if self.config.grad_scale > 0:
+                    if i == 0:
+                        it = melnet.parameters()
+                    else:
+                        it = chain(f_ext.parameters(), melnet.parameters())
+                    torch.nn.utils.clip_grad_norm_(it, self.config.grad_scale)
                 self.optimizers[i].step()
 
+                # Gradient logging
+                if i == 0:
+                    grad_info = get_grad_info(melnet)
+                else:
+                    grad_info = get_grad_info(f_ext, melnet)
+
             # re-move network to cpu
-            self.melnets[i] = melnet.cpu()
-            if i != 0:
-                self.f_exts[i-1] = f_ext.cpu()
+            # self.melnets[i] = melnet.cpu()
+            # if i != 0:
+            #     self.f_exts[i-1] = f_ext.cpu()
             losses.insert(0, loss.item())
             grad_infos.insert(0, grad_info)
 
@@ -113,8 +126,8 @@ class MelNetModel(object):
         cond = None
         melnet = self.melnets[0].to(self.device)
         timesteps = self.config.n_mel * 2 // self.scale_count
-        num_mels =  self.config.timesteps * 2 // self.scale_count
-        axis = False
+        num_mels  = self.config.timesteps * 2 // self.scale_count
+        axis = False if self.n_layers % 2 == 0 else True
         for i in range(len(self.n_layers)):
             x = torch.zeros(1, timesteps, num_mels).to(self.device)
             melnet = self.melnets[i].to(self.device)
@@ -149,6 +162,11 @@ class MelNetModel(object):
                 self.f_exts[i - 1].load_state_dict(checkpoint[f'f_ext_{i}'])
             self.melnets[i].load_state_dict(checkpoint[f'melnet_{i}'])
             self.optimizers[i].load_state_dict(checkpoint[f'optimizer_{i}'])
+
+            for state in self.optimizers[i].state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(self.device)
 
 
 if __name__ == "__main__":
