@@ -18,7 +18,7 @@ def argparse_dict(arg):
     result = dict()
     for s in arg.split(','):
         pairs = s.split('=')
-        result[pairs[0]] = float(pairs[1])
+        result[pairs[0]] = eval(pairs[1])
     return result
 
 
@@ -84,14 +84,14 @@ class Config(object):
 
         if opt.mode == 'train':
             self.parser.add_argument('--optimizer', type=str, default='SGD')
-            self.parser.add_argument('--lr', type=float, default=1e-3)
-            self.parser.add_argument('--optargs', type=argparse_dict, default={})
+            self.parser.add_argument('--lr-decay', action='store_true')
+            self.parser.add_argument('--optim-args', type=argparse_dict, default={})
             self.parser.add_argument('--grad-clip', type=float, default=0.)
             self.parser.add_argument('--grad-scale', type=float, default=0.)
 
         # --- Network --- #
         # Network width
-        self.parser.add_argument('--n-layers', nargs='+', type=int, default=[14, 6, 5, 4])
+        self.parser.add_argument('--n-layers', nargs='+', type=int, default=[16, 6, 5, 4])
         self.parser.add_argument('--width', type=int, default=256)
         # Number of mixtures
         self.parser.add_argument('--mixtures', type=int, default=10)

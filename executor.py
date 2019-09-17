@@ -2,10 +2,10 @@ import torch
 import time
 import os
 import math
+import numpy as np
 
 from datetime import datetime
 from torchvision.transforms import Compose
-# from torch.utils.tensorboard import SummaryWriter
 from tensorboardX import SummaryWriter
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
@@ -160,7 +160,7 @@ class Executor(object):
 
                     self.iteration += 1
                 # TODO: Run test
-                # self.test(mode='validation')
+                self.test(mode='validation')
                 # Store Network on epoch intervals
                 if epoch % self.config.epoch_interval == 0:
                     print(f"Storing network for epoch {epoch}")
@@ -177,12 +177,8 @@ class Executor(object):
         size = self.config.dataset_size // 10 if self.config.mode != mode else None
         dataloader = self.get_data(mode, size=size)
 
-        test_losses = list()
-        for batch, x in enumerate(dataloader):
-            losses = self.model.step(x)
-            test_losses.append(losses)
-
-        # TODO: process test_losses
+        losses = [self.model.step(x) for x in dataloader] 
+        losses = np.array(losses)
 
     def sample(self):
         sample = self.model.sample()

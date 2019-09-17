@@ -1,6 +1,7 @@
 import torch
 
 from itertools import chain
+from torch.optim.lr_scheduler import LambdaLR
 
 from network import MelNet, FeatureExtraction
 from utils import generate_splits, interleave, mdn_loss, sample, get_grad_info, clip_grad
@@ -39,13 +40,17 @@ class MelNetModel(object):
 
         # Initialize Optimizers
         if self.config.mode == 'train':
+            self.schedulers = []
             self.optimizers = []
             for i in reversed(range(len(self.n_layers))):
                 melnet = self.melnets[i]
                 if i != 0:
                     f_ext = self.f_exts[i-1]
                 it = melnet.parameters() if i == 0 else chain(f_ext.parameters(), melnet.parameters())
-                self.optimizers.insert(0, self.config.optimizer(it, lr=self.config.lr, **self.config.optargs))
+                self.optimizers.insert(0, self.config.optimizer(it, **self.config.optim_args))
+                if self.config.lr_decay:
+                    print("Using Decay")
+                    self.schedulers.insert(0, LambdaLR(self.optimizers[0], lambda x: 0.1 ** (x ** 0.5 / 100)))
 
     def train(self):
         for net in chain(self.melnets, self.f_exts):
@@ -106,6 +111,8 @@ class MelNetModel(object):
                         it = chain(f_ext.parameters(), melnet.parameters())
                     torch.nn.utils.clip_grad_norm_(it, self.config.grad_scale)
                 self.optimizers[i].step()
+                if self.config.optimizer == torch.optim.Adam:
+                    self.schedulers[i].step()
 
                 # Gradient logging
                 if i == 0:
@@ -114,9 +121,9 @@ class MelNetModel(object):
                     grad_info = get_grad_info(f_ext, melnet)
 
             # re-move network to cpu
-            # self.melnets[i] = melnet.cpu()
-            # if i != 0:
-            #     self.f_exts[i-1] = f_ext.cpu()
+            self.melnets[i] = melnet #.cpu()
+            if i != 0:
+                self.f_exts[i-1] = f_ext #.cpu()
             losses.insert(0, loss.item())
             grad_infos.insert(0, grad_info)
 
