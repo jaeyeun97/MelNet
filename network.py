@@ -62,6 +62,8 @@ class MelNet(nn.Module):
             # Paper states that there are two condition networks: W^t_z, W^f_z
             self.cond_freq = nn.Linear(cond_dims, dims)
             self.cond_time = nn.Linear(cond_dims, dims)
+            self.c_freq = None
+            self.c_time = None
         self.cond = cond
 
         # Main layers
@@ -76,13 +78,18 @@ class MelNet(nn.Module):
         # Print model size
         self.num_params()
 
+    def set_condition(self, c):
+        if self.cond:
+            self.c_time = self.cond_time(c)
+            self.c_freq = self.cond_freq(c)
+
     def forward(self, x, c=None):
         # x: [B, T, M]
-        # Shift the inputs left for time-delay inputs
+        # Shift the inputs right for time-delay inputs
         # x_time: [B, T, M, 1]
-        x_time = F.pad(x, [0, 0, -1, 1, 0, 0]).unsqueeze(-1)
-        # Shift the inputs down for freq-delay inputs
-        x_freq = F.pad(x, [0, 0, 0, 0, -1, 1]).unsqueeze(-1)
+        x_time = F.pad(x, [0, 0, 1, -1, 0, 0]).unsqueeze(-1)
+        # Shift the inputs up for freq-delay inputs
+        x_freq = F.pad(x, [0, 0, 0, 0, 1, -1]).unsqueeze(-1)
 
         # Initial transform from 1 to dims
         # x_time : [B, T, M, D]
@@ -91,10 +98,10 @@ class MelNet(nn.Module):
         x_freq = self.freq_input(x_freq)
 
         if self.cond:
-            c_freq = self.cond_freq(c)
-            c_time = self.cond_time(c)
-            x_freq = x_freq + c_freq
-            x_time = x_time + c_time
+            if c is not None:
+                self.set_condition(c)
+            x_freq = x_freq + self.c_freq
+            x_time = x_time + self.c_time
 
         # Run through the layers
         x = (x_time, x_freq)

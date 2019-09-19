@@ -6,13 +6,12 @@ import numpy as np
 
 from datetime import datetime
 from torchvision.transforms import Compose
-from tensorboardX import SummaryWriter
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from data import get_dataset, get_dataloader
 from model import MelNetModel
 from audio import MelScale, Spectrogram, PowerToDB
-from utils import get_grad_plot
+from utils import get_grad_plot, get_spectrogram
+from logger import Logger
 
 
 class Executor(object):
@@ -45,10 +44,9 @@ class Executor(object):
             checkpoint = None
             self.epoch = 1
             self.iteration = (self.epoch - 1) * config.dataset_size + 1
-
+        self.config = config
         self.model = MelNetModel(config)
         self.model.load_networks(checkpoint)
-        self.config = config
 
     def save_model(self, it=False):
         now = datetime.now()
@@ -60,7 +58,7 @@ class Executor(object):
             name = f'epoch_{self.epoch}'
 
         data = {
-                'config': self.config.get_config(),
+                'config': self.config,
                 'epoch': self.epoch,
                 'iteration': self.iteration,
                 'timestamp': timestamp
@@ -98,94 +96,96 @@ class Executor(object):
         dataloader = get_dataloader(self.config, dataset)
         return dataloader
 
-    def train(self):
+    def logging_decorator(fn):
+        def ret(self, **kwargs):
+            start = False
+            if self.config.logging and 'logger' not in kwargs:
+                kwargs['logger'] = Logger(self.config.run_dir,
+                                          purge_step=self.iteration)
+                start = True
+
+            try:
+                fn(self, **kwargs)
+            finally:
+                if start:
+                    kwargs['logger'].close()
+        return ret
+
+    @logging_decorator
+    def train(self, logger=None):
         # Prepare Model
         self.model.train()
         # Get Dataloader
         dataloader = self.get_data('train')
 
         t = None
-        start = self.epoch
+        while self.epoch < self.config.epochs + 1:
+            # Minibatch
+            for batch, x in enumerate(dataloader):
+                # Timer
+                if batch % self.config.time_interval == 0:
+                    new_t = time.time()
+                    if t is not None:
+                        print(f"Time executed: {new_t - t}")
+                    t = new_t
 
-        writer = SummaryWriter(self.config.run_dir, purge_step=self.iteration)
-        writing_executor = ThreadPoolExecutor(max_workers=4)
-        futures = dict()
+                losses, grad_infos = self.model.step(x)
 
-        try:
-            for epoch in range(start, self.config.epochs + 1):
-                self.epoch = epoch
+                # Logging Loss
+                for i, l in enumerate(losses):
+                    logger.add_scalar(f'loss/{i+1}', l, self.iteration)
 
-                for batch, x in enumerate(dataloader):
-                    # Timer
-                    if batch % self.config.time_interval == 0:
-                        new_t = time.time()
-                        if t is not None:
-                            print(f"Time executed: {new_t - t}")
-                        t = new_t
+                # Logging Gradient Flow
+                if self.config.log_grad and (self.iteration - 1) % 50 == 0:
+                    for i, grad_info in enumerate(grad_infos):
+                        logger.add_async_image('gradient/{i+1}', get_grad_plot, grad_info, self.iteration)
 
-                    losses, grad_infos = self.model.step(x)
+                # NaN Check
+                if any(math.isnan(x) for x in losses):
+                    raise NaNError('NaN!!!')
 
-                    # Logging Loss
-                    for i, l in enumerate(losses):
-                        writer.add_scalar(f'loss/{i+1}', l, self.iteration)
+                if self.iteration % self.config.iter_interval == 0:
+                    print(f"Storing network for iteration {self.iteration}")
+                    self.save_model(True)
+                self.iteration += 1
 
-                    # Gradient Flow
-                    if self.config.log_grad is True and (self.iteration - 1) % 50 == 0:
-                        for i, grad_info in enumerate(grad_infos):
-                            future = writing_executor.submit(get_grad_plot, grad_info)
-                            futures[future] = (self.iteration, i)
+            # Validation
+            losses = self.evaluate(mode='validation')
+            # Logging Eval Loss
+            for i, l in enumerate(losses):
+                logger.add_scalar(f'loss/{i+1}/eval', l, self.iteration)
 
-                        done, _ = wait(futures, timeout=0.2, return_when=FIRST_COMPLETED)
-                        for future in done:
-                            it, net = futures[future]
-                            try:
-                                image = future.result()
-                            except TimeoutError:
-                                print('TimeoutError, no need to be too upset')
-                            except Exception as exc:
-                                print(f'Image for network {net} at iteration {it} returned exception: {exc}')
-                            else:
-                                del futures[future]
-                                writer.add_image(f'gradient/{net+1}', image, it)
+            if self.epoch % self.config.sample_interval == 0:
+                # Sample
+                sample = self.sample(logger=logger)
+                # TODO To audio
 
-                    if any(math.isnan(x) for x in losses):
-                        raise NaNError('NaN!!!')
+            # Store Network on epoch intervals
+            if self.epoch % self.config.epoch_interval == 0:
+                print(f"Storing network for epoch {self.epoch}")
+                self.save_model()
+            self.model.train()
+            self.epoch += 1
 
-                    if self.iteration % self.config.iter_interval == 0:
-                        print(f"Storing network for iteration {self.iteration}")
-                        self.save_model(True)
-
-                    if epoch == start and batch == 0:
-                        print('Training Started')
-
-                    self.iteration += 1
-                # TODO: Run test
-                self.test(mode='validation')
-                # Store Network on epoch intervals
-                if epoch % self.config.epoch_interval == 0:
-                    print(f"Storing network for epoch {epoch}")
-                    self.save_model()
-        except NaNError:
-            print("NaN!")
-        finally:
-            writer.close()
-            writing_executor.shutdown(wait=True)
-
-    def test(self, mode='test'):
+    def evaluate(self, mode='test'):
         self.model.eval()
-
-        size = self.config.dataset_size // 10 if self.config.mode != mode else None
+        size = self.config.dataset_size
+        size = max(1, size // 10) if self.config.mode != mode else size
         dataloader = self.get_data(mode, size=size)
 
-        losses = [self.model.step(x) for x in dataloader] 
-        losses = np.array(losses)
+        with torch.no_grad():
+            losses = [self.model.step(x, mode)[0] for x in dataloader]
+            losses = np.array(losses)
 
-    def sample(self):
-        sample = self.model.sample()
-        # TODO store the sample
-        # generate spectrogram
-        # Postprocess
-        return sample
+        return np.mean(losses, axis=1)
+
+    @logging_decorator
+    def sample(self, logger=None):
+        self.model.eval()
+        with torch.no_grad():
+            sample = self.model.sample()
+        if logger is not None:
+            logger.add_async_image('spectrogram', get_spectrogram, sample, self.iteration)
 
 
 class NaNError(Exception):

@@ -1,9 +1,69 @@
 import torch
 import numpy as np
+import librosa.display
 
+from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+
+
+def mdn_loss(mu, sigma, pi, target):
+    log_probs = Normal(mu, sigma).log_prob(target.unsqueeze(-1))
+    log_probs = torch.logsumexp(log_probs + pi, -1)
+    return -log_probs.mean()
+
+
+def sample(mu, sigma, pi):
+    """Sample single point"""
+    try:
+        idx = pi.exp().multinomial(1)
+        norms = torch.normal(mu, sigma)
+        return norms[idx]
+    except RuntimeError:
+        __import__('ipdb').set_trace()
+
+
+# Should always end up with freq last
+# axis: true if time, false if freq
+def split(x, axis=True):
+    B, T, M = x.size()
+    if axis:
+        return x[:, 0::2, :], x[:, 1::2, :]
+    else:
+        return x[:, :, 0::2], x[:, :, 1::2]
+
+
+# Always interleave Freq first
+# axis false if freq true if time
+def interleave(x, y, axis=False):
+    B, T, M = x.size()
+    assert [B, T, M] == list(y.size())
+    if axis:
+        # Interleaving Time
+        new_tensor = x.new_empty((B, T*2, M))
+        new_tensor[:, 0::2, :] = x
+        new_tensor[:, 1::2, :] = y
+        return new_tensor
+    else:
+        # Interleaving Mel
+        new_tensor = x.new_empty((B, T, M*2))
+        new_tensor[:, :, 0::2] = x
+        new_tensor[:, :, 1::2] = y
+        return new_tensor
+
+
+def generate_splits(x, count):
+    """ Includes original x; outputs count pairs and 1 singleton """
+    B, T, M = x.size()
+    # yield x, x
+    # count = 3 -> Mel first
+    axis = True if count % 2 == 0 else False
+    for i in range(count, 0, -1):
+        x, y = split(x, axis)  # first = x^{<g}, second = x^g
+        yield x, y
+        axis = not axis
+    yield x
 
 
 def clip_grad(clip_size):
@@ -41,21 +101,18 @@ def get_grad_info(*networks):
     return labels, avg_grads, max_grads
 
 
-# def get_grad_info(*networks):
-#     return np.array([i for n in networks for i in grad_generator(n)])
-#
-#
-# def grad_generator(network):
-#     for n, p in network.named_parameters():
-#         if p.requires_grad and "bias" not in n:
-#             grad = p.grad.abs()
-#             yield grad.mean().item(), grad.max().item()
+def figure_to_image(fig):
+    canvas = FigureCanvas(fig)
+    canvas.draw()
+    data = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
+    w, h = canvas.get_width_height()
+    image_hwc = data.reshape([h, w, 4])[:, :, 0:3]
+    return np.moveaxis(image_hwc, source=2, destination=0)
 
 
 def get_grad_plot(grad_info):
     labels, avg_grads, max_grads = grad_info
     fig = Figure(figsize=(14, 9), dpi=96)
-    canvas = FigureCanvas(fig)
     ax = fig.gca()
     ax.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
     ax.bar(np.arange(len(max_grads)), avg_grads, alpha=0.1, lw=1, color="b")
@@ -72,69 +129,16 @@ def get_grad_plot(grad_info):
                Line2D([0], [0], color="b", lw=4),
                Line2D([0], [0], color="k", lw=4)],
               ['max-gradient', 'mean-gradient', 'zero-gradient']) 
-    fig.subplots_adjust(bottom=0.2)
-    canvas.draw()
-    data = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
-    w, h = canvas.get_width_height()
-    image_hwc = data.reshape([h, w, 4])[:, :, 0:3]
-    return np.moveaxis(image_hwc, source=2, destination=0)
+    fig.subplots_adjust(bottom=0.4)
+    return figure_to_image(fig)
 
 
-def mdn_loss(mu, sigma, pi, target):
-    dist = torch.distributions.normal.Normal(mu, sigma)
-    logits = dist.log_prob(target.unsqueeze(-1))
-    # probs = torch.exp(logits + pi)
-    # probs = logits.exp().mul(pi)
-    probs = torch.logsumexp(logits + pi, -1)
-    return -probs.mean()
-
-
-def sample(mu, sigma, pi):
-    cat = torch.distributions.categorical.Categorical(logits=pi)
-    # cat = torch.distributions.categorical.Categorical(probs=pi)
-    dist = torch.distributions.normal.Normal(mu, sigma)
-    idx = cat.sample().unsqueeze(-1)
-    norms = dist.sample()
-    return norms.gather(3, idx).squeeze(-1)
-
-
-# Always split time first
-# axis: true if time, false if freq
-def split(x, axis=True):
-    B, T, M = x.size()
-    if axis:
-        return x[:, 0::2, :], x[:, 1::2, :]
-    else:
-        return x[:, :, 0::2], x[:, :, 1::2]
-
-
-# interleave freq first if n_layer % 2 == 0 else time
-# axis: true if time, false if freq
-def interleave(x, y, axis=False):
-    B, T, M = x.size()
-    assert [B, T, M] == list(y.size())
-    if axis:
-        new_tensor = x.new_empty((B, T, M*2))
-        new_tensor[:, :, 0::2] = x
-        new_tensor[:, :, 1::2] = y
-        return new_tensor
-    else:
-        new_tensor = x.new_empty((B, T*2, M))
-        new_tensor[:, 0::2, :] = x
-        new_tensor[:, 1::2, :] = y
-        return new_tensor
-
-
-def generate_splits(x, count):
-    """ Includes original x; outputs count+1 pairs and 1 singleton """
-    B, T, M = x.size()
-    # yield x, x
-    axis = False
-    for i in range(count, 0, -1):
-        x, y = split(x, axis)  # first = x^{<g}, second = x^g
-        yield x, y
-        axis = not axis
-    yield x
+def get_spectrogram(sample):
+    fig = Figure(figsize=(14, 9), dpi=96)
+    ax = fig.gca()
+    sample = sample.cpu().squeeze(0).transpose(0, 1).numpy()
+    librosa.display.specshow(sample, x_axis='time', y_axis='mel', ax=ax)
+    return figure_to_image(fig)
 
 
 if __name__ == "__main__":

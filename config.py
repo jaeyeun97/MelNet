@@ -23,7 +23,7 @@ def argparse_dict(arg):
 
 
 class Config(object):
-    def __init__(self):
+    def __init__(self, config=None):
         self.parser = argparse.ArgumentParser()
 
         self.parser.add_argument('name', type=str)
@@ -33,28 +33,30 @@ class Config(object):
         self.parser.add_argument('--load-epoch', type=int, default=0)
         self.parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
         self.parser.add_argument('--device', type=int, default=0)
+        self.parser.add_argument('--logging', action='store_false')
 
         opt, _ = self.parser.parse_known_args()
 
         # --- Mode Specific --- #
 
         if opt.mode != 'sample':
+            self.parser.add_argument('--dataset', type=str, default='maestro', help='Which dataset to use: [maestro | musicnet]')
+            self.parser.add_argument('--dataroot', type=str, required=True, help='parent directory of datasets')
             self.parser.add_argument('--batch-size', type=int, default=1)
             self.parser.add_argument('--num-workers', type=int, default=4)
             self.parser.add_argument('--shuffle', action='store_true')
-            self.parser.add_argument('--log-grad', action='store_true')
             self.parser.add_argument('--dataset-size', type=int, default=4000)
             self.parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
+            self.parser.add_argument('--sample-interval', type=int, default=1000)
 
         if opt.mode == 'train':
-            self.parser.add_argument('--dataset', type=str, default='maestro', help='Which dataset to use: [maestro | musicnet]')
-            self.parser.add_argument('--dataroot', type=str, required=True, help='parent directory of datasets')
             self.parser.add_argument('--time-interval', type=int, default=20)
             self.parser.add_argument('--iter-interval', type=int, default=2000)
+            self.parser.add_argument('--log-grad', action='store_true')
             self.parser.add_argument('--epoch-interval', type=int, default=1)
             self.parser.add_argument('--epochs', type=int, default=200)
 
-        if opt.load_iter == 0 and opt.load_epoch == 0:
+        if opt.load_iter == 0 and opt.load_epoch == 0 and opt.mode == 'train':
             self.new_config()
             new_config = True
         else:
@@ -121,13 +123,15 @@ class Config(object):
         self.config['frame_length'] = self.config['hop_length'] * (self.config['timesteps'] - 1)
 
     def load_config(self, config):
+        d = self.config
         if isinstance(config, Config):
-            d = config.config
+            self.config = config.config
         else:
-            d = config
+            self.config = config
 
         for k in d.keys():
-            if k not in self.config or self.config[k] != d[k]:
+            default = self.parser.get_default(k)
+            if k not in self.config or (d[k] != default and self.config[k] != d[k]):
                 self.config[k] = d[k]
 
     def get_config(self):
