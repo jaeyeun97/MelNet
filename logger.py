@@ -11,6 +11,10 @@ class Logger(object):
     def add_scalar(self, name, scalar, global_step):
         self.writer.add_scalar(name, scalar, global_step)
 
+    def add_audio(self, name, audio, global_step, sr=22050):
+        __import__('ipdb').set_trace()
+        self.writer.add_audio(name, audio, global_step, sample_rate=sr)
+
     def add_async_image(self, name, fn, arg, global_step):
         future = self.async_executor.submit(fn, arg)
         self.futures[future] = (global_step, name)

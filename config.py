@@ -72,6 +72,7 @@ class Config(object):
 
         # --- Audio --- #
         self.parser.add_argument('--sample-rate', type=int, default=22050)
+        self.parser.add_argument('--top-db', type=float, default=80.0)
         # TODO: implement CQT measures
         # parser.add_argument('--spectrogram', type=str, default='mel_stft', help='[mel_stft | cqt]')
 

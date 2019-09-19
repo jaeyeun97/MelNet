@@ -9,9 +9,10 @@ from torchvision.transforms import Compose
 
 from data import get_dataset, get_dataloader
 from model import MelNetModel
-from audio import MelScale, Spectrogram, PowerToDB
 from utils import get_grad_plot, get_spectrogram
 from logger import Logger
+from audio import (MelScale, Spectrogram, PowerToDB, Normalize,
+                   MelToLinear, InverseSpectrogram, DBToPower, Denormalize)
 
 
 class Executor(object):
@@ -77,7 +78,21 @@ class Executor(object):
             MelScale(sample_rate=self.config.sample_rate,
                      n_fft=self.config.n_fft,
                      n_mels=self.config.n_mels),
-            PowerToDB(normalized=True)
+            PowerToDB(),
+            Normalize(self.config.top_db)
+        ])
+
+        self.denormalize = Denormalize(self.config.top_db)
+
+        self.postprocess = Compose([
+            DBToPower(),
+            MelToLinear(sample_rate=self.config.sample_rate,
+                        n_fft=self.config.n_fft,
+                        n_mels=self.config.n_mels),
+            InverseSpectrogram(n_fft=self.config.n_fft,
+                               win_length=self.config.win_length,
+                               hop_length=self.config.hop_length,
+                               normalized=True)
         ])
 
         if self.config.preprocess_device != 'cpu':
@@ -184,8 +199,12 @@ class Executor(object):
         self.model.eval()
         with torch.no_grad():
             sample = self.model.sample()
+        sample = self.denormalize(sample)
         if logger is not None:
             logger.add_async_image('spectrogram', get_spectrogram, sample, self.iteration)
+        audio = self.postprocess(sample)
+        if logger is not None:
+            logger.add_audio('audio', audio, self.iteration)
 
 
 class NaNError(Exception):

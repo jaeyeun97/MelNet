@@ -1,5 +1,4 @@
 import torch
-import librosa
 import math
 
 from torchaudio.functional import create_fb_matrix, istft, complex_norm
@@ -7,34 +6,37 @@ from torchaudio.functional import create_fb_matrix, istft, complex_norm
 """ Reimplementations to use with CUDA operations """
 
 
-class PowerToDB(object):
-    def __init__(self, eps=1e-10, db_range=80.0, normalized=True):
-        self.eps = eps
+class Normalize(object):
+    def __init__(self, db_range=80.0):
         self.db_range = db_range
-        self.normalized = normalized
+
+    def __call__(self, x):
+        x = x.clamp(min=-self.db_range)
+        return (x + self.db_range) / self.db_range
+
+
+class Denormalize(object):
+    def __init__(self, db_range=80.0):
+        self.db_range = db_range
+
+    def __call__(self, x):
+        return (x * self.db_range) - self.db_range
+
+
+class PowerToDB(object):
+    def __init__(self, eps=1e-10):
+        self.eps = eps
 
     def __call__(self, x):
         x = x.clamp(min=self.eps)  # new tensor here
         ref = x.max().log10().item()
         x = x.log10_().sub_(ref).mul_(10)
-        x = x.clamp_(min=-self.db_range)
-
-        if self.normalized:
-            return (x + self.db_range) / self.db_range, ref
-        else:
-            return x, ref
+        return x
 
 
 class DBToPower(object):
-    def __init__(self, eps=1e-10, db_range=80.0, normalized=True):
-        self.eps = eps
-        self.db_range = db_range
-        self.normalized = normalized
-
-    def __call__(self, x, ref=0.):
-        if self.normalized:
-            x = (x * self.db_range) - self.db_range
-        return torch.pow(10, x.div_(10).add_(ref))
+    def __call__(self, x):
+        return torch.pow(10, x.div_(10))
 
 
 class MelScale(object):
@@ -175,47 +177,9 @@ class InverseSpectrogram(object):
 
 
 if __name__ == "__main__":
-    # import librosa.display
-    # import numpy as np
-    # import matplotlib.pyplot as plt
-
-    # plt.figure()
-
+    import librosa
     x, sr = librosa.load(librosa.util.example_audio_file())
     l = len(x)
-
-    # S = librosa.stft(x, n_fft=1536, hop_length=256)
-    # print(np.max(S))
-    # print(np.mean(S))
-    # plt.subplot(4, 1, 1)
-    # plt.hist(x)
-    # plt.title('STFT Histogram')
-
-    # S = np.abs(S)
-    # print(np.max(S))
-    # print(np.mean(S))
-    # plt.subplot(4, 1, 2)
-    # librosa.display.specshow(S, sr=sr)
-    # plt.colorbar()
-    # plt.title('Mag STFT Histogram')
-
-    # S = librosa.feature.melspectrogram(sr=sr, S=S, n_fft=1536, hop_length=256, n_mels=256)
-    # print(np.max(S))
-    # print(np.mean(S))
-    # plt.subplot(4, 1, 3)
-    # librosa.display.specshow(S, sr=sr, y_axis='log')
-    # plt.colorbar()
-    # plt.title('Mel-Mag STFT Histogram')
-
-    # S = librosa.power_to_db(S**2, ref=np.max)
-    # print(np.max(S))
-    # print(np.mean(S))
-    # plt.subplot(4, 1, 4)
-    # librosa.display.specshow(S, sr=sr, y_axis='log')
-    # plt.colorbar(format='%+2.0f dB')
-    # plt.title('Mel-Mag-dB spectrogram')
-    # plt.tight_layout()
-    # plt.show()
 
     x = torch.from_numpy(x).to('cuda:0')
     melscale = MelScale(sample_rate=sr, n_fft=1536, n_mels=256)
@@ -223,11 +187,11 @@ if __name__ == "__main__":
     logpower = PowerToDB(normalized=False)
     X = spectrogram(x)
     Y = melscale(X)
-    Z, ref = logpower(Y)
+    Z = logpower(Y)
     powerlog = DBToPower(normalized=False)
     meltolin = MelToLinear(sample_rate=sr, n_fft=1536, n_mels=256)
     ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, normalized=True, length=l)
-    Y_hat = powerlog(Z, ref)
+    Y_hat = powerlog(Z)
     print(f'dB Error: {(Y_hat - Y).pow(2).mean()}')
     X_hat = meltolin(Y_hat)
     print(f'Mel Error: {(X - X_hat).pow(2).mean()}')
@@ -235,5 +199,3 @@ if __name__ == "__main__":
     print(f'Spec Error: {(x_hat - x).pow(2).mean()}')
     for i in range(x_hat.size(0)):
         librosa.output.write_wav(f'/home/jaeyeun/test_griffinlim_{i}.wav', x_hat[i, :].cpu().numpy(), sr=sr)
-    # librosa.display.specshow(x, sr=sr, y_axis='log')
-    # plt.show()
