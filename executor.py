@@ -59,7 +59,7 @@ class Executor(object):
             name = f'epoch_{self.epoch}'
 
         data = {
-                'config': self.config,
+                'config': self.config.get_config(),
                 'epoch': self.epoch,
                 'iteration': self.iteration,
                 'timestamp': timestamp
@@ -148,7 +148,7 @@ class Executor(object):
 
                 # Logging Loss
                 for i, l in enumerate(losses):
-                    logger.add_scalar(f'loss/{i+1}', l, self.iteration)
+                    logger.add_scalar(f'train_loss/{i+1}', l, self.iteration)
 
                 # Logging Gradient Flow
                 if self.config.log_grad and (self.iteration - 1) % 50 == 0:
@@ -168,7 +168,7 @@ class Executor(object):
             losses = self.evaluate(mode='validation')
             # Logging Eval Loss
             for i, l in enumerate(losses):
-                logger.add_scalar(f'loss/{i+1}/eval', l, self.iteration)
+                logger.add_scalar(f'val_loss/{i+1}', l, self.iteration)
 
             if self.epoch % self.config.sample_interval == 0:
                 # Sample
@@ -185,14 +185,14 @@ class Executor(object):
     def evaluate(self, mode='test'):
         self.model.eval()
         size = self.config.dataset_size
-        size = max(1, size // 10) if self.config.mode != mode else size
+        size = max(1, min(100, size // 10)) if self.config.mode != mode else size
         dataloader = self.get_data(mode, size=size)
 
         with torch.no_grad():
             losses = [self.model.step(x, mode)[0] for x in dataloader]
             losses = np.array(losses)
 
-        return np.mean(losses, axis=1)
+        return np.mean(losses, axis=0)
 
     @logging_decorator
     def sample(self, logger=None):

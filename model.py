@@ -5,7 +5,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from datetime import datetime
 
 from network import MelNet, FeatureExtraction
-from utils import generate_splits, interleave, mdn_loss, sample, get_grad_info, clip_grad
+from utils import generate_splits, interleave, mdn_loss, get_grad_info, clip_grad
 
 
 class MelNetModel(object):
@@ -129,8 +129,6 @@ class MelNetModel(object):
         return losses, grad_infos
 
     def sample(self):
-        melnet = self.melnets[0].to(self.device)
-
         div_factor = (2 ** (self.scale_count // 2))
         num_mels = self.config.n_mels // div_factor
         timesteps = self.config.timesteps // div_factor
@@ -139,36 +137,37 @@ class MelNetModel(object):
             num_mels //= 2
 
         axis = False
-        prev_x = None
+        output = None
         for i in range(len(self.n_layers)):
-            x = torch.zeros(1, timesteps, num_mels).cuda(device=self.device, non_blocking=True)
+            x = torch.zeros(1, timesteps, num_mels).to(device=self.device)
             melnet = self.melnets[i].to(self.device)
 
-            if prev_x is not None:
-                print(prev_x.size())
+            if output is not None:
+                print(output)
                 f_ext = self.f_exts[i - 1].to(self.device)
-                melnet.set_condition(f_ext(prev_x))
+                melnet.set_condition(f_ext(output))
 
             # Autoregression
             t = datetime.now()
-            for j in range(timesteps):
-                for k in range(num_mels):
-                    mu, sigma, pi = melnet(x)
-                    mu = mu[0, j, k]
-                    sigma = sigma[0, j, k]
-                    pi = pi[0, j, k]
-                    torch.cuda.synchronize(self.device)
-                    x[0, j, k] = sample(mu, sigma, pi)
-            print(f"Sampling Time: {datetime.now() - t}")
+            try:
+                for j in range(timesteps):
+                    for k in range(num_mels):
+                        mu, sigma, pi = (item[0, j, k] for item in melnet(x))
+                        idx = pi.exp().multinomial(1).item()
+                        x[0, j, k] = torch.normal(mu, sigma)[idx]
+                        x = x.clone()
+                print(f"Sampling Time: {datetime.now() - t}")
+            except RuntimeError:
+                __import__('ipdb').set_trace()
 
             if i == 0:
-                prev_x = x
-            elif i < len(self.n_layers) - 1:
-                prev_x = interleave(prev_x, x, axis)
-                _, timesteps, num_mels = prev_x.size()
+                output = x
+            else:
+                output = interleave(output, x, axis)
+                _, timesteps, num_mels = output.size()
                 axis = not axis
 
-        return x
+        return output
 
     def save_networks(self):
         data = dict()

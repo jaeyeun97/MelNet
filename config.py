@@ -34,6 +34,7 @@ class Config(object):
         self.parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
         self.parser.add_argument('--device', type=int, default=0)
         self.parser.add_argument('--logging', action='store_false')
+        self.parser.add_argument('--top-db', type=float, default=80.0)
 
         opt, _ = self.parser.parse_known_args()
 
@@ -47,7 +48,7 @@ class Config(object):
             self.parser.add_argument('--shuffle', action='store_true')
             self.parser.add_argument('--dataset-size', type=int, default=4000)
             self.parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
-            self.parser.add_argument('--sample-interval', type=int, default=1000)
+            self.parser.add_argument('--sample-interval', type=int, default=10)
 
         if opt.mode == 'train':
             self.parser.add_argument('--time-interval', type=int, default=20)
@@ -72,7 +73,6 @@ class Config(object):
 
         # --- Audio --- #
         self.parser.add_argument('--sample-rate', type=int, default=22050)
-        self.parser.add_argument('--top-db', type=float, default=80.0)
         # TODO: implement CQT measures
         # parser.add_argument('--spectrogram', type=str, default='mel_stft', help='[mel_stft | cqt]')
 

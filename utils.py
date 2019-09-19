@@ -14,16 +14,6 @@ def mdn_loss(mu, sigma, pi, target):
     return -log_probs.mean()
 
 
-def sample(mu, sigma, pi):
-    """Sample single point"""
-    try:
-        idx = pi.exp().multinomial(1)
-        norms = torch.normal(mu, sigma)
-        return norms[idx]
-    except RuntimeError:
-        __import__('ipdb').set_trace()
-
-
 # Should always end up with freq last
 # axis: true if time, false if freq
 def split(x, axis=True):

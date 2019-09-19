@@ -11,7 +11,7 @@ class Normalize(object):
         self.db_range = db_range
 
     def __call__(self, x):
-        x = x.clamp(min=-self.db_range)
+        x = x.clamp(max=0, min=-self.db_range)
         return (x + self.db_range) / self.db_range
 
 
@@ -20,7 +20,8 @@ class Denormalize(object):
         self.db_range = db_range
 
     def __call__(self, x):
-        return (x * self.db_range) - self.db_range
+        x = (x * self.db_range) - self.db_range
+        return x.clamp(max=0, min=-self.db_range)
 
 
 class PowerToDB(object):
@@ -36,7 +37,7 @@ class PowerToDB(object):
 
 class DBToPower(object):
     def __call__(self, x):
-        return torch.pow(10, x.div_(10))
+        return torch.pow(10, x.div(10))
 
 
 class MelScale(object):
