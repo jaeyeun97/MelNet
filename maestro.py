@@ -21,7 +21,7 @@ class Maestro(data.Dataset):
         meta = meta.where(meta.split == split).dropna()
         audio_filenames = meta.audio_filename.map(lambda name: os.path.join(root, name))
         # Do not use data that is mainly silence
-        num_frames = np.floor(meta.duration * sample_rate / frame_length).astype(int)
+        num_frames = np.ceil(meta.duration * sample_rate / frame_length).astype(int)
 
         self.frame_length = frame_length
         self.sample_rate = sample_rate

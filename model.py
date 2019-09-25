@@ -111,7 +111,7 @@ class MelNetModel(object):
                         it = chain(f_ext.parameters(), melnet.parameters())
                     torch.nn.utils.clip_grad_norm_(it, self.config.grad_scale)
                 self.optimizers[i].step()
-                if self.config.optimizer == torch.optim.Adam:
+                if self.config.lr_decay:
                     self.schedulers[i].step()
 
                 # Gradient logging
@@ -152,10 +152,10 @@ class MelNetModel(object):
             try:
                 for j in range(timesteps):
                     for k in range(num_mels):
-                        mu, sigma, pi = (item[0, j, k] for item in melnet(x))
+                        torch.cuda.synchronize()
+                        mu, sigma, pi = (item[0, j, k] for item in melnet(x.clone()))
                         idx = pi.exp().multinomial(1).item()
                         x[0, j, k] = torch.normal(mu, sigma)[idx]
-                        x = x.clone()
                 print(f"Sampling Time: {datetime.now() - t}")
             except RuntimeError:
                 __import__('ipdb').set_trace()
@@ -176,6 +176,7 @@ class MelNetModel(object):
                 data[f'f_ext_{i}'] = self.f_exts[i - 1].state_dict()
             data[f'melnet_{i}'] = self.melnets[i].state_dict()
             data[f'optimizer_{i}'] = self.optimizers[i].state_dict()
+            data[f'scheduler_{i}'] = self.schedulers[i].state_dict()
         return data
 
     def load_networks(self, checkpoint):
@@ -187,6 +188,8 @@ class MelNetModel(object):
             self.melnets[i].load_state_dict(checkpoint[f'melnet_{i}'])
             if self.config.mode == 'train':
                 self.optimizers[i].load_state_dict(checkpoint[f'optimizer_{i}'])
+                if f'scheduler_{i}' in checkpoint:
+                    self.schedulers[i].load_state_dict(checkpoint[f'scheduler_{i}'])
 
                 for state in self.optimizers[i].state.values():
                     for k, v in state.items():

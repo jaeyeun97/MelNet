@@ -37,14 +37,14 @@ class Executor(object):
         if flag:
             checkpoint = torch.load(os.path.join(config.checkpoint_dir, f'{name}.pth'))
             config.load_config(checkpoint['config'])
-            self.epoch = checkpoint['epoch']
+            self.epoch = checkpoint['epoch'] + 1
             self.iteration = checkpoint['iteration']
             time = str(datetime.fromtimestamp(checkpoint['timestamp']))
             print(f"Loading Epoch {self.epoch} from {time}")
         else:
             checkpoint = None
             self.epoch = 1
-            self.iteration = (self.epoch - 1) * config.dataset_size + 1
+            self.iteration = 1
         self.config = config
         self.model = MelNetModel(config)
         self.model.load_networks(checkpoint)
@@ -92,6 +92,7 @@ class Executor(object):
             InverseSpectrogram(n_fft=self.config.n_fft,
                                win_length=self.config.win_length,
                                hop_length=self.config.hop_length,
+                               length=self.config.frame_length,
                                normalized=True)
         ])
 
@@ -131,12 +132,13 @@ class Executor(object):
         # Prepare Model
         self.model.train()
         # Get Dataloader
-        dataloader = self.get_data('train')
+        train_dataloader = self.get_data('train')
+        val_dataloader = self.get_data('validation', size=10*self.config.batch_size)
 
         t = None
         while self.epoch < self.config.epochs + 1:
             # Minibatch
-            for batch, x in enumerate(dataloader):
+            for batch, x in enumerate(train_dataloader):
                 # Timer
                 if batch % self.config.time_interval == 0:
                     new_t = time.time()
@@ -153,44 +155,48 @@ class Executor(object):
                 # Logging Gradient Flow
                 if self.config.log_grad and (self.iteration - 1) % 50 == 0:
                     for i, grad_info in enumerate(grad_infos):
-                        logger.add_async_image('gradient/{i+1}', get_grad_plot, grad_info, self.iteration)
+                        logger.add_async_image('gradient/{i+1}', get_grad_plot, self.iteration, grad_info)
+                    logger.process_async()
 
                 # NaN Check
                 if any(math.isnan(x) for x in losses):
                     raise NaNError('NaN!!!')
 
+                # Save
                 if self.iteration % self.config.iter_interval == 0:
                     print(f"Storing network for iteration {self.iteration}")
                     self.save_model(True)
+
+                # Validate
+                if (self.iteration - 1) % self.config.val_interval == 0:
+                    with torch.no_grad():
+                        self.model.eval()
+                        losses = [self.model.step(x, 'validation')[0] for x in val_dataloader]
+                        losses = np.mean(losses, axis=0)
+
+                        for i, l in enumerate(losses):
+                            logger.add_scalar(f'val_loss/{i+1}', l, self.iteration)
+                    self.model.train()
                 self.iteration += 1
-
-            # Validation
-            losses = self.evaluate(mode='validation')
-            # Logging Eval Loss
-            for i, l in enumerate(losses):
-                logger.add_scalar(f'val_loss/{i+1}', l, self.iteration)
-
-            if self.epoch % self.config.sample_interval == 0:
-                # Sample
-                sample = self.sample(logger=logger)
-                # TODO To audio
 
             # Store Network on epoch intervals
             if self.epoch % self.config.epoch_interval == 0:
                 print(f"Storing network for epoch {self.epoch}")
                 self.save_model()
-            self.model.train()
+
+            if self.epoch % self.config.sample_interval == 0:
+                self.sample(logger=logger)
+                logger.process_async()
+                self.model.train()
+
             self.epoch += 1
 
-    def evaluate(self, mode='test'):
+    def test(self):
         self.model.eval()
-        size = self.config.dataset_size
-        size = max(1, min(100, size // 10)) if self.config.mode != mode else size
-        dataloader = self.get_data(mode, size=size)
+        dataloader = self.get_data('test')
 
         with torch.no_grad():
-            losses = [self.model.step(x, mode)[0] for x in dataloader]
-            losses = np.array(losses)
+            losses = [self.model.step(x, 'test')[0] for x in dataloader]
 
         return np.mean(losses, axis=0)
 
@@ -198,10 +204,12 @@ class Executor(object):
     def sample(self, logger=None):
         self.model.eval()
         with torch.no_grad():
+            # 1, T, M
             sample = self.model.sample()
         sample = self.denormalize(sample)
         if logger is not None:
-            logger.add_async_image('spectrogram', get_spectrogram, sample, self.iteration)
+            logger.add_async_image('spectrogram', get_spectrogram, self.iteration, sample,
+                                   hop_length=self.config.hop_length, sr=self.config.sample_rate)
         audio = self.postprocess(sample)
         if logger is not None:
             logger.add_audio('audio', audio, self.iteration)

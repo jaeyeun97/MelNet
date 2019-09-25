@@ -12,7 +12,7 @@ class Normalize(object):
 
     def __call__(self, x):
         x = x.clamp(max=0, min=-self.db_range)
-        return (x + self.db_range) / self.db_range
+        return (x + self.db_range) / self.db_range 
 
 
 class Denormalize(object):
@@ -182,20 +182,26 @@ if __name__ == "__main__":
     x, sr = librosa.load(librosa.util.example_audio_file())
     l = len(x)
 
-    x = torch.from_numpy(x).to('cuda:0')
+    x = torch.from_numpy(x) #.to('cuda:0')
     melscale = MelScale(sample_rate=sr, n_fft=1536, n_mels=256)
     spectrogram = Spectrogram(n_fft=1536, hop_length=256, win_length=1536, normalized=True)
-    logpower = PowerToDB(normalized=False)
+    logpower = PowerToDB()
+    normalize = Normalize()
     X = spectrogram(x)
     Y = melscale(X)
     Z = logpower(Y)
-    powerlog = DBToPower(normalized=False)
+    W = normalize(Z)
+    W = W.unsqueeze(0)
+    powerlog = DBToPower()
     meltolin = MelToLinear(sample_rate=sr, n_fft=1536, n_mels=256)
     ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, normalized=True, length=l)
-    Y_hat = powerlog(Z)
+    denormalize = Denormalize()
+    Z_hat = denormalize(W)
+    Y_hat = powerlog(Z_hat)
     print(f'dB Error: {(Y_hat - Y).pow(2).mean()}')
     X_hat = meltolin(Y_hat)
     print(f'Mel Error: {(X - X_hat).pow(2).mean()}')
+    print(X_hat.size())
     x_hat = ispec(X_hat)
     print(f'Spec Error: {(x_hat - x).pow(2).mean()}')
     for i in range(x_hat.size(0)):

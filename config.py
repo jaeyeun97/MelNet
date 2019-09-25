@@ -48,13 +48,14 @@ class Config(object):
             self.parser.add_argument('--shuffle', action='store_true')
             self.parser.add_argument('--dataset-size', type=int, default=4000)
             self.parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
-            self.parser.add_argument('--sample-interval', type=int, default=10)
 
         if opt.mode == 'train':
+            self.parser.add_argument('--val-interval', type=int, default=100)
             self.parser.add_argument('--time-interval', type=int, default=20)
             self.parser.add_argument('--iter-interval', type=int, default=2000)
             self.parser.add_argument('--log-grad', action='store_true')
             self.parser.add_argument('--epoch-interval', type=int, default=1)
+            self.parser.add_argument('--sample-interval', type=int, default=10)
             self.parser.add_argument('--epochs', type=int, default=200)
 
         if opt.load_iter == 0 and opt.load_epoch == 0 and opt.mode == 'train':

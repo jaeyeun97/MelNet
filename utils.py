@@ -123,11 +123,12 @@ def get_grad_plot(grad_info):
     return figure_to_image(fig)
 
 
-def get_spectrogram(sample):
-    fig = Figure(figsize=(14, 9), dpi=96)
+def get_spectrogram(sample, hop_length=256, sr=22050):
+    fig = Figure()
     ax = fig.gca()
     sample = sample.cpu().squeeze(0).transpose(0, 1).numpy()
-    librosa.display.specshow(sample, x_axis='time', y_axis='mel', ax=ax)
+    librosa.display.specshow(sample, x_axis='time', y_axis='mel', ax=ax,
+                             hop_length=hop_length, sr=sr)
     return figure_to_image(fig)
 
 

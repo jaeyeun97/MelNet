@@ -14,8 +14,8 @@ class Logger(object):
     def add_audio(self, name, audio, global_step, sr=22050):
         self.writer.add_audio(name, audio, global_step, sample_rate=sr)
 
-    def add_async_image(self, name, fn, arg, global_step):
-        future = self.async_executor.submit(fn, arg)
+    def add_async_image(self, name, fn, global_step, *args, **kwargs):
+        future = self.async_executor.submit(fn, *args, **kwargs)
         self.futures[future] = (global_step, name)
 
     def process_async(self):
@@ -33,6 +33,7 @@ class Logger(object):
             except Exception as exc:
                 print(f'{name} at iteration {step} returned exception: {exc}')
             else:
+                del self.futures[future]
                 self.writer.add_image(name, image, step)
 
     def close(self):
