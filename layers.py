@@ -5,7 +5,7 @@ import torch.nn as nn
 class FrequencyDelayedStack(nn.Module):
     def __init__(self, dims, hook=None):
         super().__init__()
-        self.rnn = nn.GRU(dims, dims)  # , batch_first=True)
+        self.rnn = nn.GRU(dims, dims, batch_first=True)
         self.hidden = nn.Parameter(torch.zeros(1, 1, dims))
         self.hook = hook
 
@@ -19,7 +19,7 @@ class FrequencyDelayedStack(nn.Module):
         x = x.view(-1, M, D)
 
         # Through the RNN
-        # self.rnn.flatten_parameters()
+        self.rnn.flatten_parameters()
         x, _ = self.rnn(x, self.hidden.expand(-1, B*T, -1).contiguous())
         if self.hook:
             x.register_hook(self.hook)
@@ -29,8 +29,8 @@ class FrequencyDelayedStack(nn.Module):
 class TimeDelayedStack(nn.Module):
     def __init__(self, dims, hook=None):
         super().__init__()
-        self.bi_freq_rnn = nn.GRU(dims, dims, bidirectional=True) # , batch_first=True)
-        self.time_rnn = nn.GRU(dims, dims) # , batch_first=True)
+        self.bi_freq_rnn = nn.GRU(dims, dims, bidirectional=True, batch_first=True)
+        self.time_rnn = nn.GRU(dims, dims, batch_first=True)
         self.bi_freq_hidden = nn.Parameter(torch.zeros(2, 1, dims))
         self.time_hidden = nn.Parameter(torch.zeros(1, 1, dims))
         self.hook = hook

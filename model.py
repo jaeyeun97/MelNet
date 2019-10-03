@@ -64,7 +64,7 @@ class MelNetModel(object):
         import os
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
-        dist.init_process_group("nccl", world_size=2)
+        dist.init_process_group("nccl", world_size=1, rank=0)
         torch.manual_seed(42)
 
     def train(self):

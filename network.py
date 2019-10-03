@@ -35,9 +35,9 @@ class FeatureExtraction(nn.Module):
         x_freq = x_freq.view(-1, M, D)  # [B*T, M, D]
 
         # Run through the rnns
-        # self.time_rnn.flatten_parameters()
+        self.time_rnn.flatten_parameters()
         x_time, _ = self.time_rnn(x_time, self.time_hidden.expand(-1, B*M, -1).contiguous())
-        # self.freq_rnn.flatten_parameters()
+        self.freq_rnn.flatten_parameters()
         x_freq, _ = self.freq_rnn(x_freq, self.freq_hidden.expand(-1, B*T, -1).contiguous())
 
         if self.hook:
