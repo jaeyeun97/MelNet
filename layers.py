@@ -5,10 +5,11 @@ import torch.nn as nn
 class FrequencyDelayedStack(nn.Module):
     def __init__(self, dims, hook=None):
         super().__init__()
-        self.rnn = nn.GRU(dims, dims, batch_first=True)
+        self.rnn = nn.GRU(dims, dims)  # , batch_first=True)
+        self.hidden = nn.Parameter(torch.zeros(1, 1, dims))
         self.hook = hook
 
-    def forward(self, x_time, x_freq):
+    def forward(self, x_time, x_freq, x_cent=None):
         # sum the inputs
         x = x_time + x_freq
 
@@ -18,7 +19,8 @@ class FrequencyDelayedStack(nn.Module):
         x = x.view(-1, M, D)
 
         # Through the RNN
-        x, _ = self.rnn(x)
+        # self.rnn.flatten_parameters()
+        x, _ = self.rnn(x, self.hidden.expand(-1, B*T, -1).contiguous())
         if self.hook:
             x.register_hook(self.hook)
         return x.view(B, T, M, D)
@@ -27,8 +29,10 @@ class FrequencyDelayedStack(nn.Module):
 class TimeDelayedStack(nn.Module):
     def __init__(self, dims, hook=None):
         super().__init__()
-        self.bi_freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
-        self.time_rnn = nn.GRU(dims, dims, batch_first=True)
+        self.bi_freq_rnn = nn.GRU(dims, dims, bidirectional=True) # , batch_first=True)
+        self.time_rnn = nn.GRU(dims, dims) # , batch_first=True)
+        self.bi_freq_hidden = nn.Parameter(torch.zeros(2, 1, dims))
+        self.time_hidden = nn.Parameter(torch.zeros(1, 1, dims))
         self.hook = hook
 
     def forward(self, x_time):
@@ -41,8 +45,12 @@ class TimeDelayedStack(nn.Module):
         freq_input = x_time.view(-1, M, D)  # [B*T, M, D]
 
         # Run through the rnns
-        x_1, _ = self.time_rnn(time_input)
-        x_2_and_3, _ = self.bi_freq_rnn(freq_input)
+        self.time_rnn.flatten_parameters()
+        x_1, _ = self.time_rnn(time_input,
+                               self.time_hidden.expand(-1, B*M, -1).contiguous())
+        self.bi_freq_rnn.flatten_parameters()
+        x_2_and_3, _ = self.bi_freq_rnn(freq_input,
+                                        self.bi_freq_hidden.expand(-1, B*T, -1).contiguous())
 
         if self.hook:
             x_1.register_hook(self.hook)
@@ -55,6 +63,18 @@ class TimeDelayedStack(nn.Module):
         # And concatenate for output
         x_time = torch.cat([x_1, x_2_and_3], dim=3)
         return x_time
+
+
+class CentralizedStack(nn.Module):
+    def __init__(self, dims, num_mels):
+        self.rnn = nn.GRU(dims * num_mels, dims, batch_first=True)
+        self.hidden = nn.Parameter(1, 1, dims)
+
+    def forward(self, x_time):
+        B, T, M, D = x_time.size() 
+        x_time = x_time.view(B, T, -1)
+        out, _ = self.rnn(x_time, self.hidden.expand(-1, B, -1).contiguous())
+        return out.unsqueeze(2).expand(B, T, M, D)  # size: B, T, D
 
 
 class Layer(nn.Module):

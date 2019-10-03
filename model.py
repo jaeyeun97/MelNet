@@ -1,7 +1,10 @@
 import torch
+import torch.nn as nn
 
 from itertools import chain
 from torch.optim.lr_scheduler import LambdaLR
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
 from datetime import datetime
 
 from network import MelNet, FeatureExtraction
@@ -15,9 +18,8 @@ class MelNetModel(object):
         self.config = config
         self.n_layers = self.config.n_layers
         self.scale_count = len(self.n_layers) - 1
-        self.device = self.config.device
+        self.devices = self.config.devices
         self.dtype = self.config.dtype
-        self.preprocess = None
 
         dims = self.config.width
         n_mixtures = self.config.mixtures
@@ -29,15 +31,20 @@ class MelNetModel(object):
         # Unconditional first
         self.melnets = [MelNet(dims, self.n_layers[0],
                                n_mixtures=n_mixtures,
-                               hook=hook).to(self.dtype)]
+                               hook=hook).to(dtype=self.dtype, device=self.devices[0])]
         self.f_exts = []
         # Upsample Networks
         for n_layer in self.n_layers[1:]:
             self.melnets.append(MelNet(dims, n_layer,
                                        n_mixtures=n_mixtures,
                                        cond=True, cond_dims=dims*4,
-                                       hook=hook).to(self.dtype))
-            self.f_exts.append(FeatureExtraction(dims, hook=hook).to(self.dtype))
+                                       hook=hook).to(dtype=self.dtype, device=self.devices[0]))
+            self.f_exts.append(FeatureExtraction(dims, hook=hook).to(dtype=self.dtype, device=self.devices[0]))
+
+        if len(self.devices) > 1:
+            self.setup()
+            self.melnets = [DDP(net) for net in self.melnets]
+            self.f_exts = [DDP(net) for net in self.f_exts]
 
         # Initialize Optimizers
         if self.config.mode == 'train':
@@ -53,6 +60,13 @@ class MelNetModel(object):
                     print("Using Decay")
                     self.schedulers.insert(0, LambdaLR(self.optimizers[0], lambda x: 0.1 ** (x ** 0.4 / 50)))
 
+    def setup(self):
+        import os
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '12355'
+        dist.init_process_group("nccl", world_size=2)
+        torch.manual_seed(42)
+
     def train(self):
         for net in chain(self.melnets, self.f_exts):
             net.train()
@@ -61,14 +75,8 @@ class MelNetModel(object):
         for net in chain(self.melnets, self.f_exts):
             net.eval()
 
-    def set_preprocess(self, preprocess):
-        self.preprocess = preprocess
-
     def step(self, x, mode='train'):
-        x = x.to(dtype=self.dtype, device=self.device)
-
-        if self.preprocess is not None:
-            x = self.preprocess(x)
+        x = x.to(dtype=self.dtype, device=self.devices[0])
 
         splits = generate_splits(x, self.scale_count)
         losses = []
@@ -81,15 +89,14 @@ class MelNetModel(object):
             if mode == 'train':
                 self.optimizers[i].zero_grad()
 
-            melnet = self.melnets[i].to(self.device)
-
             if i == 0:
                 x = next(splits)
+                cond = None
             else:
-                f_ext = self.f_exts[i - 1].to(self.device)
                 cond, x = next(splits)
-                melnet.set_condition(f_ext(cond))
-            mu, sigma, pi = melnet(x)
+                cond = self.f_exts[i-1](cond)
+
+            mu, sigma, pi = self.melnets[i](x, cond)
 
             loss = mdn_loss(mu, sigma, pi, x)
 
@@ -99,16 +106,16 @@ class MelNetModel(object):
                 # Gradient Clipping
                 if self.config.grad_clip > 0:
                     if i == 0:
-                        it = melnet.parameters()
+                        it = self.melnets[0].parameters()
                     else:
-                        it = chain(f_ext.parameters(), melnet.parameters())
+                        it = chain(self.f_exts[i-1].parameters(), self.melnets[i].parameters())
                     torch.nn.utils.clip_grad_value_(it, self.config.grad_clip)
 
                 if self.config.grad_scale > 0:
                     if i == 0:
-                        it = melnet.parameters()
+                        it = self.melnets[0].parameters()
                     else:
-                        it = chain(f_ext.parameters(), melnet.parameters())
+                        it = chain(self.f_exts[i-1].parameters(), self.melnets[i].parameters())
                     torch.nn.utils.clip_grad_norm_(it, self.config.grad_scale)
                 self.optimizers[i].step()
                 if self.config.lr_decay:
@@ -116,14 +123,10 @@ class MelNetModel(object):
 
                 # Gradient logging
                 if i == 0:
-                    grad_info = get_grad_info(melnet)
+                    grad_info = get_grad_info(self.melnets[i])
                 else:
-                    grad_info = get_grad_info(f_ext, melnet)
+                    grad_info = get_grad_info(self.f_exts[i-1], self.melnets[i])
                 grad_infos.insert(0, grad_info)
-
-            self.melnets[i] = melnet  # .cpu()
-            if i != 0:
-                self.f_exts[i-1] = f_ext  # .cpu()
             losses.insert(0, loss.item())
 
         return losses, grad_infos
@@ -132,6 +135,7 @@ class MelNetModel(object):
         div_factor = (2 ** (self.scale_count // 2))
         num_mels = self.config.n_mels // div_factor
         timesteps = self.config.timesteps // div_factor
+        batchsize = len(self.devices)
 
         if self.scale_count % 2 != 0:
             num_mels //= 2
@@ -139,13 +143,15 @@ class MelNetModel(object):
         axis = False
         output = None
         for i in range(len(self.n_layers)):
-            x = torch.zeros(1, timesteps, num_mels).to(device=self.device)
-            melnet = self.melnets[i].to(self.device)
+            # TODO: change this somehow
+            x = torch.zeros(batchsize, timesteps, num_mels)
+            melnet = self.melnets[i]
 
             if output is not None:
-                print(output)
-                f_ext = self.f_exts[i - 1].to(self.device)
-                melnet.set_condition(f_ext(output))
+                f_ext = self.f_exts[i - 1] # .to(self.device)
+                cond = f_ext(output)
+            else:
+                cond = None
 
             # Autoregression
             t = datetime.now()
@@ -153,9 +159,9 @@ class MelNetModel(object):
                 for j in range(timesteps):
                     for k in range(num_mels):
                         torch.cuda.synchronize()
-                        mu, sigma, pi = (item[0, j, k] for item in melnet(x.clone()))
-                        idx = pi.exp().multinomial(1).item()
-                        x[0, j, k] = torch.normal(mu, sigma)[idx]
+                        mu, sigma, pi = (item[:, j, k] for item in melnet(x.clone(), cond))
+                        idx = pi.exp().multinomial(1)
+                        x[:, j, k] = torch.normal(mu, sigma).gather(-1, idx).squeeze(-1)
                 print(f"Sampling Time: {datetime.now() - t}")
             except RuntimeError:
                 __import__('ipdb').set_trace()
@@ -176,7 +182,8 @@ class MelNetModel(object):
                 data[f'f_ext_{i}'] = self.f_exts[i - 1].state_dict()
             data[f'melnet_{i}'] = self.melnets[i].state_dict()
             data[f'optimizer_{i}'] = self.optimizers[i].state_dict()
-            data[f'scheduler_{i}'] = self.schedulers[i].state_dict()
+            if self.config.lr_decay:
+                data[f'scheduler_{i}'] = self.schedulers[i].state_dict()
         return data
 
     def load_networks(self, checkpoint):
@@ -194,19 +201,4 @@ class MelNetModel(object):
                 for state in self.optimizers[i].state.values():
                     for k, v in state.items():
                         if isinstance(v, torch.Tensor):
-                            state[k] = v.to(self.device)
-
-
-if __name__ == "__main__":
-    from config import Config
-    config = Config()
-    model = MelNetModel(config)
-
-    import librosa
-    x, sr = librosa.load(librosa.util.example_audio_file(),
-                         sr=config.sample_rate,
-                         duration=config.frame_length / config.sample_rate)
-    x = torch.from_numpy(x).unsqueeze(0)
-    print(x.size())
-    for _ in range(20):
-        model.step(x)
+                            state[k] = v.to(self.devices[0])

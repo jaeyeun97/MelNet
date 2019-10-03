@@ -6,38 +6,20 @@ from torchaudio.functional import create_fb_matrix, istft, complex_norm
 """ Reimplementations to use with CUDA operations """
 
 
-class Normalize(object):
-    def __init__(self, db_range=80.0):
-        self.db_range = db_range
-
-    def __call__(self, x):
-        x = x.clamp(max=0, min=-self.db_range)
-        return (x + self.db_range) / self.db_range 
-
-
-class Denormalize(object):
-    def __init__(self, db_range=80.0):
-        self.db_range = db_range
-
-    def __call__(self, x):
-        x = (x * self.db_range) - self.db_range
-        return x.clamp(max=0, min=-self.db_range)
-
-
-class PowerToDB(object):
+class LogAmplitude(object):
     def __init__(self, eps=1e-10):
         self.eps = eps
 
     def __call__(self, x):
-        x = x.clamp(min=self.eps)  # new tensor here
-        ref = x.max().log10().item()
-        x = x.log10_().sub_(ref).mul_(10)
-        return x
+        return x.add(self.eps).log()
 
 
-class DBToPower(object):
+class LinearAmplitude(object):
+    def __init__(self, eps=1e-10):
+        self.eps = eps
+
     def __call__(self, x):
-        return torch.pow(10, x.div(10))
+        return x.exp().sub(self.eps)
 
 
 class MelScale(object):
@@ -70,7 +52,7 @@ class MelToLinear(object):
         assert m == m2
         X = torch.zeros(b, k, n, requires_grad=True,
                         dtype=melspec.dtype, device=melspec.device)
-        optim = torch.optim.LBFGS([X], tolerance_grad=1e-6, tolerance_change=1e-10)
+        optim = torch.optim.LBFGS([X])
 
         for _ in range(m):
             def step_func():
@@ -179,25 +161,26 @@ class InverseSpectrogram(object):
 
 if __name__ == "__main__":
     import librosa
+    import matplotlib.pyplot as plt
     x, sr = librosa.load(librosa.util.example_audio_file())
     l = len(x)
 
-    x = torch.from_numpy(x) #.to('cuda:0')
+    x = torch.from_numpy(x).to('cuda:0')
     melscale = MelScale(sample_rate=sr, n_fft=1536, n_mels=256)
-    spectrogram = Spectrogram(n_fft=1536, hop_length=256, win_length=1536, normalized=True)
-    logpower = PowerToDB()
-    normalize = Normalize()
+    spectrogram = Spectrogram(n_fft=1536, hop_length=256, win_length=1536, power=1)
+    logamp = LogAmplitude()
     X = spectrogram(x)
     Y = melscale(X)
-    Z = logpower(Y)
-    W = normalize(Z)
-    W = W.unsqueeze(0)
-    powerlog = DBToPower()
+    Z = logamp(Y)
+    print(Z.min())
+    print(Z.max())
+    print(Z.mean())
+    print(Z.var())
+    Z = Z.unsqueeze(0)
+    linearamp = LinearAmplitude()
     meltolin = MelToLinear(sample_rate=sr, n_fft=1536, n_mels=256)
-    ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, normalized=True, length=l)
-    denormalize = Denormalize()
-    Z_hat = denormalize(W)
-    Y_hat = powerlog(Z_hat)
+    ispec = InverseSpectrogram(n_fft=1536, hop_length=256, win_length=1536, power=1, length=l)
+    Y_hat = linearamp(Z)
     print(f'dB Error: {(Y_hat - Y).pow(2).mean()}')
     X_hat = meltolin(Y_hat)
     print(f'Mel Error: {(X - X_hat).pow(2).mean()}')

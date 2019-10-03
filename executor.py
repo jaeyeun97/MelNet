@@ -5,14 +5,14 @@ import math
 import numpy as np
 
 from datetime import datetime
-from torchvision.transforms import Compose
+from torchvision.transforms import Compose, Lambda
 
 from data import get_dataset, get_dataloader
 from model import MelNetModel
 from utils import get_grad_plot, get_spectrogram
 from logger import Logger
-from audio import (MelScale, Spectrogram, PowerToDB, Normalize,
-                   MelToLinear, InverseSpectrogram, DBToPower, Denormalize)
+from audio import (MelScale, Spectrogram, LogAmplitude,
+                   MelToLinear, InverseSpectrogram, LinearAmplitude)
 
 
 class Executor(object):
@@ -37,14 +37,16 @@ class Executor(object):
         if flag:
             checkpoint = torch.load(os.path.join(config.checkpoint_dir, f'{name}.pth'))
             config.load_config(checkpoint['config'])
-            self.epoch = checkpoint['epoch'] + 1
+            self.epoch = checkpoint['epoch'], Lambda
             self.iteration = checkpoint['iteration']
             time = str(datetime.fromtimestamp(checkpoint['timestamp']))
             print(f"Loading Epoch {self.epoch} from {time}")
         else:
             checkpoint = None
-            self.epoch = 1
-            self.iteration = 1
+            self.epoch = 0
+            self.iteration = 0
+        self.iteration += 1
+        self.epoch += 1
         self.config = config
         self.model = MelNetModel(config)
         self.model.load_networks(checkpoint)
@@ -71,21 +73,19 @@ class Executor(object):
     def setup_preprocess(self):
 
         self.preprocess = Compose([
+            Lambda(lambda x: x.to(self.config.preprocess_device)),
             Spectrogram(n_fft=self.config.n_fft,
                         win_length=self.config.win_length,
                         hop_length=self.config.hop_length,
-                        normalized=True),
+                        power=1),
             MelScale(sample_rate=self.config.sample_rate,
                      n_fft=self.config.n_fft,
                      n_mels=self.config.n_mels),
-            PowerToDB(),
-            Normalize(self.config.top_db)
+            LogAmplitude()
         ])
 
-        self.denormalize = Denormalize(self.config.top_db)
-
         self.postprocess = Compose([
-            DBToPower(),
+            LinearAmplitude(),
             MelToLinear(sample_rate=self.config.sample_rate,
                         n_fft=self.config.n_fft,
                         n_mels=self.config.n_mels),
@@ -93,20 +93,13 @@ class Executor(object):
                                win_length=self.config.win_length,
                                hop_length=self.config.hop_length,
                                length=self.config.frame_length,
-                               normalized=True)
+                               power=1)
         ])
-
-        if self.config.preprocess_device != 'cpu':
-            self.model.set_preprocess(self.preprocess)
 
     def get_data(self, mode, size=None):
         "Allow for custom mode and dataset size"
         size = self.config.dataset_size if size is None else size
-
-        if self.config.preprocess_device == 'cpu':
-            dataset = get_dataset(self.config, mode, size, preprocess=self.preprocess)
-        else:
-            dataset = get_dataset(self.config, mode, size)
+        dataset = get_dataset(self.config, mode, size, preprocess=self.preprocess)
 
         print(f"Dataset Size: {len(dataset)}")
         dataloader = get_dataloader(self.config, dataset)
@@ -116,8 +109,7 @@ class Executor(object):
         def ret(self, **kwargs):
             start = False
             if self.config.logging and 'logger' not in kwargs:
-                kwargs['logger'] = Logger(self.config.run_dir,
-                                          purge_step=self.iteration)
+                kwargs['logger'] = Logger(self.config.run_dir)
                 start = True
 
             try:
@@ -206,13 +198,16 @@ class Executor(object):
         with torch.no_grad():
             # 1, T, M
             sample = self.model.sample()
-        sample = self.denormalize(sample)
         if logger is not None:
-            logger.add_async_image('spectrogram', get_spectrogram, self.iteration, sample,
-                                   hop_length=self.config.hop_length, sr=self.config.sample_rate)
+            for i in range(sample.size(0)):
+                logger.add_async_image(f'spectrogram/{i}', get_spectrogram,
+                                       self.iteration, sample[i, :, :].mul(20),
+                                       hop_length=self.config.hop_length,
+                                       sr=self.config.sample_rate)
         audio = self.postprocess(sample)
         if logger is not None:
-            logger.add_audio('audio', audio, self.iteration)
+            for i in range(audio.size(0)):
+                logger.add_audio(f'audio/{i}', audio[i, :], self.iteration)
 
 
 class NaNError(Exception):

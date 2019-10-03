@@ -32,7 +32,7 @@ class Config(object):
         self.parser.add_argument('--load-iter', type=int, default=0)
         self.parser.add_argument('--load-epoch', type=int, default=0)
         self.parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')
-        self.parser.add_argument('--device', type=int, default=0)
+        self.parser.add_argument('--devices', nargs='+', type=int, default=[0])
         self.parser.add_argument('--logging', action='store_false')
         self.parser.add_argument('--top-db', type=float, default=80.0)
 
@@ -47,7 +47,7 @@ class Config(object):
             self.parser.add_argument('--num-workers', type=int, default=4)
             self.parser.add_argument('--shuffle', action='store_true')
             self.parser.add_argument('--dataset-size', type=int, default=4000)
-            self.parser.add_argument('--preprocess-device', type=str, default='gpu', help='[cpu | gpu]')
+            self.parser.add_argument('--preprocess-device', type=int, default=-1)
 
         if opt.mode == 'train':
             self.parser.add_argument('--val-interval', type=int, default=100)
@@ -101,10 +101,18 @@ class Config(object):
         self.parser.add_argument('--mixtures', type=int, default=10)
 
     def initvars(self, new_config):
-        if self.config['device'] < 0:
-            self.config['device'] = torch.device('cpu')
+        devices = list()
+        for dev_id in self.config['devices']:
+            if dev_id == -1:
+                devices.append(torch.device('cpu'))
+            else:
+                devices.append(torch.device('cuda', dev_id))
+        self.config['devices'] = devices
+
+        if self.config['preprocess_device'] == -1:
+            self.config['preprocess_device'] = torch.device('cpu')
         else:
-            self.config['device'] = torch.device('cuda', self.config['device']) 
+            self.config['preprocess_device'] = torch.device('cuda', self.config['preprocess_device'])
 
         self.config['run_dir'] = os.path.join(self.config['run_dir'],
                                               self.config['name'])

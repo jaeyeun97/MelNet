@@ -16,6 +16,8 @@ class FeatureExtraction(nn.Module):
 
         self.freq_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
         self.time_rnn = nn.GRU(dims, dims, batch_first=True, bidirectional=True)
+        self.freq_hidden = nn.Parameter(torch.zeros(2, 1, dims))
+        self.time_hidden = nn.Parameter(torch.zeros(2, 1, dims))
 
         self.hook = hook
 
@@ -33,8 +35,10 @@ class FeatureExtraction(nn.Module):
         x_freq = x_freq.view(-1, M, D)  # [B*T, M, D]
 
         # Run through the rnns
-        x_time, _ = self.time_rnn(x_time)
-        x_freq, _ = self.freq_rnn(x_freq)
+        # self.time_rnn.flatten_parameters()
+        x_time, _ = self.time_rnn(x_time, self.time_hidden.expand(-1, B*M, -1).contiguous())
+        # self.freq_rnn.flatten_parameters()
+        x_freq, _ = self.freq_rnn(x_freq, self.freq_hidden.expand(-1, B*T, -1).contiguous())
 
         if self.hook:
             x_time.register_hook(self.hook)
