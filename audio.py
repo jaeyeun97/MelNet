@@ -2,8 +2,43 @@ import torch
 import math
 
 from torchaudio.functional import create_fb_matrix, istft, complex_norm
+from torchvision.transforms import Compose
 
 """ Reimplementations to use with CUDA operations """
+
+
+def get_audio_processes(config):
+    preprocess = Compose([
+        ToDevice(config.preprocess_device),
+        Spectrogram(n_fft=config.n_fft,
+                    win_length=config.win_length,
+                    hop_length=config.hop_length,
+                    power=1),
+        MelScale(sample_rate=config.sample_rate,
+                 n_fft=config.n_fft,
+                 n_mels=config.n_mels),
+        LogAmplitude()
+    ])
+    postprocess = Compose([
+        LinearAmplitude(),
+        MelToLinear(sample_rate=config.sample_rate,
+                    n_fft=config.n_fft,
+                    n_mels=config.n_mels),
+        InverseSpectrogram(n_fft=config.n_fft,
+                           win_length=config.win_length,
+                           hop_length=config.hop_length,
+                           length=config.frame_length,
+                           power=1)
+    ])
+    return preprocess, postprocess
+
+
+class ToDevice(object):
+    def __init__(self, device):
+        self.device = device
+
+    def __call__(self, x):
+        return x.to(self.device)
 
 
 class LogAmplitude(object):

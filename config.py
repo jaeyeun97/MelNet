@@ -154,7 +154,10 @@ class Config(object):
         self.config[name] = value
 
     def __getattr__(self, name):
-        return self.config[name]
+        if name in self.config:
+            return self.config[name]
+        else:
+            super().__getattr__()
 
     def __repr__(self):
         return pprint.pformat(self.config)
