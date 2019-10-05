@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import librosa.display
 
 from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
@@ -124,6 +123,7 @@ def get_grad_plot(grad_info):
 
 
 def get_spectrogram(sample, hop_length=256, sr=22050):
+    import librosa.display
     fig = Figure()
     ax = fig.gca()
     if len(sample.size()) > 2:

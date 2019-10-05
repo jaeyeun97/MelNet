@@ -10,32 +10,31 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 
 
-def get_train_fn(config, model_fn, train_dataset, val_dataset, checkpoint, postprocess):
+def get_train_fn(config, model_fn, train_dataset, val_dataset, postprocess):
     # pre-apply everything except rank, world_size, device, pipes
     return partial(train, model_fn, config.get_config(),
-                   train_dataset, val_dataset, postprocess=postprocess,
-                   checkpoint=checkpoint)
+                   train_dataset, val_dataset, postprocess=postprocess)
 
 
-def train(model_fn, config, train_dataset, val_dataset, 
-          rank, world_size, devices, pipes, postprocess=None,
-          checkpoint=None):
+def train(model_fn, config, train_dataset, val_dataset,
+          rank, world_size, devices, pipes, postprocess=None):
 
     dist.init_process_group(backend='nccl', init_method='env://',
                             world_size=world_size, rank=rank)
     device = devices[rank]
     pipes = pipes[rank]
 
+    # Prepare Model
+    model = model_fn(device)
+
+    checkpoint = load_model(config, device)
     if checkpoint is not None:
         iteration = checkpoint['iteration'] + 1
         epoch = checkpoint['epoch'] + 1
+        model.load_networks(checkpoint)
     else:
         iteration = 1
         epoch = 1
-
-    # Prepare Model
-    model = model_fn(device)
-    model.load_networks(checkpoint)
     model.train()
     dist.barrier()
 
@@ -70,7 +69,7 @@ def train(model_fn, config, train_dataset, val_dataset,
             if batch % config['time_interval'] == 0 and rank == 0:
                 new_t = time.time()
                 if t is not None:
-                    print(f"Rank {rank}: time executed: {new_t - t}")
+                    print(f"Time executed: {new_t - t}")
                 t = new_t
 
             losses, grad_infos = model.step(x)
@@ -89,7 +88,7 @@ def train(model_fn, config, train_dataset, val_dataset,
             # Save
             if iteration % config['iter_interval'] == 0 and rank == 0:
                 print(f"Storing network for iteration {iteration}")
-                save_model(model, epoch, iteration-1, config, True)
+                save_model(model, epoch, iteration, config, True)
 
             # Validate
             if (iteration - 1) % config['val_interval'] == 0:
@@ -112,18 +111,24 @@ def train(model_fn, config, train_dataset, val_dataset,
         # Sample
         if epoch % config['sample_interval'] == 0:
             print("Sampling..")
+            dist.barrier()
             with torch.no_grad():
+                model.eval()
                 sample = model.sample()
-                pipes['spectrogram'].send((iteration - 1, rank, sample))
-                if postprocess:
-                    sample = postprocess(sample)
-                pipes['audio'].send((iteration - 1, rank, sample))
+            pipes['spectrogram'].send((iteration - 1, rank, sample.cpu()))
+            if postprocess:
+                audio = postprocess(sample)
+                if len(audio.size()) > 1:
+                    audio = audio.squeeze(0).cpu()
+                pipes['audio'].send((iteration - 1, rank, audio))
             model.train()
+            dist.barrier()
 
         epoch += 1
 
     for pipe in pipes.values():
         pipe.close()
+    dist.destroy_process_group()
 
 
 def save_model(model, epoch, iteration, config, it=False):
@@ -134,7 +139,6 @@ def save_model(model, epoch, iteration, config, it=False):
         'iteration': iteration,
         'epoch': epoch,
         'timestamp': timestamp,
-        'config': config
     })
 
     if it:
@@ -143,5 +147,24 @@ def save_model(model, epoch, iteration, config, it=False):
         name = f'epoch_{epoch}'
 
     checkpoint_dir = config['checkpoint_dir']
-    torch.save(checkpoint, os.path.join(checkpoint_dir, f'{name}.pth'))
+    torch.save(checkpoint, os.path.join(checkpoint_dir, f'net_{name}.pth'))
+    torch.save(config, os.path.join(checkpoint_dir, f'config_{name}.pth'))
+
+
+def load_model(config, device):
+    if config['load_iter'] != 0:
+        name = f"net_iter_{config['load_iter']}"
+    elif config['load_epoch'] != 0:
+        name = f"net_epoch_{config['load_epoch']}"
+    else:
+        name = None
+
+    if name is not None:
+        checkpoint = torch.load(os.path.join(config['checkpoint_dir'], f'{name}.pth'),
+                                map_location=device)
+        time = str(datetime.fromtimestamp(checkpoint['timestamp']))
+        print(f"Loading Epoch {checkpoint['epoch']} from {time}")
+    else:
+        checkpoint = None
+    return checkpoint
 

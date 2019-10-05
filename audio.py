@@ -35,7 +35,10 @@ def get_audio_processes(config):
 
 class ToDevice(object):
     def __init__(self, device):
-        self.device = device
+        if device == -1:
+            self.device = torch.device('cpu')
+        else:
+            self.device = torch.device('cuda', device)
 
     def __call__(self, x):
         return x.to(self.device)

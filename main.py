@@ -2,8 +2,6 @@ import os
 import torch
 import torch.multiprocessing as mp
 
-from datetime import datetime
-
 from config import Config
 from train import get_train_fn
 from model import get_model_fn
@@ -12,12 +10,12 @@ from tb import get_log_proc_fn
 from audio import get_audio_processes
 
 
-def load_model(config):
+def update_config(config):
     if config.load_iter != 0:
-        name = f'iter_{config.load_iter}'
+        name = f'config_iter_{config.load_iter}'
         flag = True
     elif config.load_epoch != 0:
-        name = f'epoch_{config.load_epoch}'
+        name = f'config_epoch_{config.load_epoch}'
         flag = True
     elif config.mode != 'train':
         raise Exception('Load Network for Validation, Testing, or Sampling')
@@ -26,11 +24,8 @@ def load_model(config):
 
     if flag:
         checkpoint = torch.load(os.path.join(config.checkpoint_dir, f'{name}.pth'))
-        time = str(datetime.fromtimestamp(checkpoint['timestamp']))
-        print(f"Loading Epoch {checkpoint['epoch']} from {time}")
-    else:
-        checkpoint = None
-    return checkpoint
+        print(f"Loading Config")
+        config.load_config(checkpoint)
 
 
 def get_pipe_types(mode):
@@ -40,16 +35,25 @@ def get_pipe_types(mode):
         return ['spectrogram', 'audio']
 
 
-def main():
-    config = Config()  
+def get_devices(devices):
+    res = list()
+    for dev in devices:
+        if dev == -1:
+            res.append(torch.device('cpu'))
+        else:
+            res.append(torch.device('cuda', dev))
+    return res
 
-    # Load Model
-    checkpoint = load_model(config)
-    if checkpoint is not None:
-        config = config.load_config(checkpoint['config'])
+
+def main():
+    config = Config()
+
+    # Load config
+    update_config(config)
 
     # Process #
     world_size = len(config.devices)
+    devices = get_devices(config.devices)
     # Audio Processes
     preprocess, postprocess = get_audio_processes(config)
     # pre-apply everything except device
@@ -93,8 +97,11 @@ def main():
                                   preprocess=preprocess)
 
         # pre-apply everything except rank, world_size, device, pipes
-        train_fn = get_train_fn(config, model_fn, train_dataset, val_dataset, checkpoint, postprocess)
-        mp.spawn(train_fn, args=(world_size, config.devices, worker_p), nprocs=world_size)
+        train_fn = get_train_fn(config, model_fn, train_dataset, val_dataset, postprocess)
+        if world_size > 1:
+            mp.spawn(train_fn, args=(world_size, devices, worker_p), nprocs=world_size)
+        else:
+            train_fn(0, 1, devices, worker_p)
 
     # TODO: low priority
     elif config.mode == 'test':

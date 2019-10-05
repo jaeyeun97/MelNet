@@ -1,18 +1,27 @@
-import torch
-import numpy as np
+import traceback
 
 from functools import partial
 from tensorboardX import SummaryWriter
 from concurrent.futures import ThreadPoolExecutor
+# from pudb.remote import set_trace
 
 from utils import get_spectrogram, get_grad_plot
 
 
 def get_log_proc_fn(config):
-    return partial(logging_process, config.run_dir,
+    return partial(debug_wrapper, config.run_dir,
                    hop_length=config.hop_length,
                    sample_rate=config.sample_rate)
 
+
+def debug_wrapper(*args, **kwargs):
+    try:
+        logging_process(*args, **kwargs)
+    except Exception as e:
+        print('---Caught exception in logging process---')
+        traceback.print_exc()
+        print()
+        raise e
 
 def logging_process(run_dir, proc_num, world_size, ctrl, pipes,
                     hop_length=256, sample_rate=22050):
@@ -43,7 +52,8 @@ def logging_process(run_dir, proc_num, world_size, ctrl, pipes,
                                                sr=sample_rate)
                     elif name == 'audio':
                         iteration, rank, sample = content
-                        logger.add_audio(f'audio/{rank}', sample, iteration)
+                        logger.add_audio(f'audio/{rank}', sample, iteration,
+                                         sample_rate=sample_rate)
                     elif name == 'grad':
                         iteration, grad_infos = pipe.recv()
                         for i, grad_info in enumerate(grad_infos):

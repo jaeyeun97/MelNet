@@ -27,7 +27,7 @@ class Config(object):
         self.parser = argparse.ArgumentParser()
 
         self.parser.add_argument('name', type=str)
-        self.parser.add_argument('--run-dir', type=str, default='/tmp/melnet')
+        self.parser.add_argument('--run-dir', type=str, default='./runs')
         self.parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints')
         self.parser.add_argument('--load-iter', type=int, default=0)
         self.parser.add_argument('--load-epoch', type=int, default=0)
@@ -101,19 +101,6 @@ class Config(object):
         self.parser.add_argument('--mixtures', type=int, default=10)
 
     def initvars(self, new_config):
-        devices = list()
-        for dev_id in self.config['devices']:
-            if dev_id == -1:
-                devices.append(torch.device('cpu'))
-            else:
-                devices.append(torch.device('cuda', dev_id))
-        self.config['devices'] = devices
-
-        if self.config['preprocess_device'] == -1:
-            self.config['preprocess_device'] = torch.device('cpu')
-        else:
-            self.config['preprocess_device'] = torch.device('cuda', self.config['preprocess_device'])
-
         self.config['run_dir'] = os.path.join(self.config['run_dir'],
                                               self.config['name'])
         self.config['checkpoint_dir'] = os.path.join(self.config['checkpoint_dir'],

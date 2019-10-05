@@ -1,7 +1,8 @@
 import os
 import pandas
 import numpy as np
-import librosa
+import soundfile as sf
+import resampy
 import torch
 
 from torch.utils import data
@@ -54,10 +55,27 @@ class Maestro(data.Dataset):
         start = (index - offset) * self.frame_length / self.sample_rate
         # end = start + self.frame_length
 
-        y, _ = librosa.load(record.filename, sr=self.sample_rate,
-                            offset=start,
-                            duration=self.duration)
-        y = librosa.util.fix_length(y, self.frame_length)
+        # from librosa.load
+        with sf.SoundFile(record.filename) as f:
+            sr = f.samplerate
+            f.seek(int(start * sr))
+            y = f.read(frames=int(self.duration * sr),
+                       dtype=np.float32, always_2d=True).T
+
+        # mono
+        if y.ndim > 1:
+            y = np.mean(y, axis=0)
+
+        # resample
+        if sr != self.sample_rate:
+            y = resampy.resample(y, sr, self.sample_rate, filter='kaiser_best')
+
+        # length normalize
+        n = y.shape[-1]
+        if n > self.frame_length:
+            y = y[:self.frame_length]
+        elif n < self.frame_length:
+            y = np.pad(y, (0, self.frame_length - n))
 
         if self.preprocess is not None:
             y = torch.from_numpy(y)
@@ -65,25 +83,12 @@ class Maestro(data.Dataset):
 
         return y
 
-        # if idx not in self.cache.keys():
-        #     # open file, resample, and store the numpy array
-        #     self.counter[idx] = 1
-        #     self.cache[idx], _ = librosa.load(record.filename, sr=self.sample_rate)
-
-        # data = self.cache[idx][start:end]
-
-        # self.counter[idx] += 1
-        # if self.counter[idx] == record.frame_nums:
-        #     del self.cache[idx]
-        #     del self.counter[idx]
-
-        # return data
-
     def __len__(self):
         return self.size
 
 
 if __name__ == "__main__":
+    import librosa
     manager = Manager()
     dataset = Maestro('../maestro-v2.0.0', 319 * 1025, sample_rate=22050, split='train', manager=manager)
 

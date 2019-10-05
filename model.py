@@ -156,11 +156,11 @@ class MelNetModel(object):
         output = None
         for i in range(len(self.n_layers)):
             x = torch.zeros(batchsize, timesteps, num_mels).to(self.device)
-            melnet = self.melnets[i]
+            melnet = self.melnets[i].module
 
             if output is not None:
-                f_ext = self.f_exts[i - 1]
-                cond = f_ext.module(output)
+                f_ext = self.f_exts[i - 1].module
+                cond = f_ext(output)
             else:
                 cond = None
 
@@ -170,7 +170,7 @@ class MelNetModel(object):
             for j in range(timesteps):
                 for k in range(num_mels):
                     torch.cuda.synchronize()
-                    mu, sigma, pi = (item[:, j, k] for item in melnet.module(x.clone(), cond))
+                    mu, sigma, pi = (item[:, j, k] for item in melnet(x.clone(), cond))
                     idx = pi.exp().multinomial(1)
                     x[:, j, k] = torch.normal(mu, sigma).gather(-1, idx).squeeze(-1)
             print(f"Sampling Time: {datetime.now() - t}")
