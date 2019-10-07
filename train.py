@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import time
 import torch.distributed as dist
+import soundfile as sf
 
 from functools import partial
 from datetime import datetime
@@ -12,18 +13,23 @@ from torch.utils.data import DataLoader
 
 def get_train_fn(config, model_fn, train_dataset, val_dataset, postprocess):
     # pre-apply everything except rank, world_size, device, pipes
+    seed = np.random.randint(np.iinfo(np.int).max)
     return partial(train, model_fn, config.get_config(),
-                   train_dataset, val_dataset, postprocess=postprocess)
+                   train_dataset, val_dataset, postprocess=postprocess, seed=seed)
 
 
 def train(model_fn, config, train_dataset, val_dataset,
-          rank, world_size, devices, pipes, postprocess=None):
+          rank, world_size, devices, pipes, postprocess=None, seed=None):
+
+    device = devices[rank]
+    pipes = pipes[rank]
+    torch.cuda.set_device(device)
+
+    if seed is not None:
+        torch.manual_seed(seed)
 
     dist.init_process_group(backend='nccl', init_method='env://',
                             world_size=world_size, rank=rank)
-    device = devices[rank]
-    pipes = pipes[rank]
-
     # Prepare Model
     model = model_fn(device)
 
@@ -74,8 +80,12 @@ def train(model_fn, config, train_dataset, val_dataset,
 
             losses, grad_infos = model.step(x)
 
-            # Logging Loss
             losses = torch.tensor(losses).to(device)
+
+            if torch.isnan(losses).any():
+                print("NaN at loss")
+
+            # Logging Loss
             dist.reduce(losses, 0)
             if rank == 0:
                 losses = losses.div(world_size).cpu().numpy()
@@ -110,7 +120,6 @@ def train(model_fn, config, train_dataset, val_dataset,
 
         # Sample
         if epoch % config['sample_interval'] == 0:
-            print("Sampling..")
             dist.barrier()
             with torch.no_grad():
                 model.eval()
@@ -119,8 +128,11 @@ def train(model_fn, config, train_dataset, val_dataset,
             if postprocess:
                 audio = postprocess(sample)
                 if len(audio.size()) > 1:
-                    audio = audio.squeeze(0).cpu()
+                    audio = audio.squeeze(0)
+                audio = audio.cpu()
                 pipes['audio'].send((iteration - 1, rank, audio))
+                path = os.path.join(config['sample_dir'], f'{iteration-1}_{rank}.wav')
+                sf.write(path, audio, config['sample_rate'])
             model.train()
             dist.barrier()
 

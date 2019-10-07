@@ -29,6 +29,7 @@ class Config(object):
         self.parser.add_argument('name', type=str)
         self.parser.add_argument('--run-dir', type=str, default='./runs')
         self.parser.add_argument('--checkpoint-dir', type=str, default='./checkpoints')
+        self.parser.add_argument('--sample-dir', type=str, default='./samples')
         self.parser.add_argument('--load-iter', type=int, default=0)
         self.parser.add_argument('--load-epoch', type=int, default=0)
         self.parser.add_argument('--mode', type=str, default='train', help='[train | validation | test | sample]')

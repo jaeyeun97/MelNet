@@ -6,7 +6,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 
 
-def test(model_fn, dataset, batch_size, q, rank, world_size, device,
+def test(model_fn, config, dataset, batch_size, q, rank, world_size, device,
          checkpoint=None, num_workers=0, shuffle=False):
     dist.init_process_group(backend='nccl', init_method='env://',
                             world_size=world_size, rank=rank)

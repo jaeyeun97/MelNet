@@ -53,7 +53,7 @@ def logging_process(run_dir, proc_num, world_size, ctrl, pipes,
                     elif name == 'audio':
                         iteration, rank, sample = content
                         logger.add_audio(f'audio/{rank}', sample, iteration,
-                                         sample_rate=sample_rate)
+                                         sr=sample_rate)
                     elif name == 'grad':
                         iteration, grad_infos = pipe.recv()
                         for i, grad_info in enumerate(grad_infos):

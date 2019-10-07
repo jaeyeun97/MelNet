@@ -62,6 +62,7 @@ def main():
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     os.makedirs(config.run_dir, exist_ok=True)
+    os.makedirs(config.sample_dir, exist_ok=True)
     os.makedirs(config.checkpoint_dir, exist_ok=True)
 
     # Logging Thread Spawn

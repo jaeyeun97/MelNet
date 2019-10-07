@@ -105,6 +105,9 @@ class MelNetModel(object):
                 cond, x = next(splits)
                 cond = self.f_exts[i-1](cond)
 
+            if cond is not None and torch.isnan(cond).any():
+                print('NaN at FExt')
+
             mu, sigma, pi = self.melnets[i](x, cond)
 
             loss = mdn_loss(mu, sigma, pi, x)
