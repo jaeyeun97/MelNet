@@ -176,7 +176,7 @@ class InverseSpectrogram(object):
                             hop_length=self.hop_length,
                             win_length=self.win_length,
                             window=self.window,
-                            length=self.length)
+                            length=self.length).float()
 
             # Rebuild the spectrogram
             rebuilt = inverse.stft(n_fft=self.n_fft,

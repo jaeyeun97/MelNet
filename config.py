@@ -101,6 +101,9 @@ class Config(object):
         # Number of mixtures
         self.parser.add_argument('--mixtures', type=int, default=10)
 
+        self.parser.add_argument('--amp-enable', action='store_false')
+        self.parser.add_argument('--amp-level', type=str, default='O1')
+
     def initvars(self, new_config):
         self.config['run_dir'] = os.path.join(self.config['run_dir'],
                                               self.config['name'])

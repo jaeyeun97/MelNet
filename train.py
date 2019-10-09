@@ -30,6 +30,9 @@ def train(model_fn, config, train_dataset, val_dataset,
 
     dist.init_process_group(backend='nccl', init_method='env://',
                             world_size=world_size, rank=rank)
+
+    torch.backends.cudnn.benchmark = True
+
     # Prepare Model
     model = model_fn(device)
 
