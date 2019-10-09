@@ -7,6 +7,7 @@ Implementation seems to be reasonably working. I'm using 2x2080Ti (which was a h
 Batchsize: 16, Width: 64, Hop Length: 256, Timesteps: 384, Sample Rate: 16384 (~5 seconds of audio).
 Batchsize: 8, Width: 128, Hop Length: 256, Timesteps: 384, Sample Rate: 16384 (~5 seconds of audio).
 
+The codebase for now lacks the Centralised Stack. (Please contribute!)
 
 ### Dataset
 
