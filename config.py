@@ -121,7 +121,7 @@ class Config(object):
         if self.config['hop_length'] is None:
             self.config['hop_length'] = self.config['n_fft'] // 4
 
-        self.config['frame_length'] = self.config['hop_length'] * (self.config['timesteps'] - 1)
+        self.config['frame_length'] = self.config['hop_length'] * self.config['timesteps'] - 1
 
     def load_config(self, config):
         d = self.config

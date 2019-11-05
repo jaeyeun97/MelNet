@@ -75,7 +75,7 @@ class MelNetModel(object):
                                             enabled=amp_enable,
                                             opt_level=amp_level)
             self.melnet_optims = optims[:len(self.n_layers)]
-            self.fext_optims = optims[:len(self.n_layers)]
+            self.fext_optims = optims[len(self.n_layers):]
 
             if self.lr_decay:
                 self.fext_scheds = [LambdaLR(optim, sched_fn)
