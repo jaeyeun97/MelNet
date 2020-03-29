@@ -47,14 +47,12 @@ class Dataset(IterableDataset):
                  n_bins=336, bins_per_octave=48, num_workers=0, world_size=1):
         super(Dataset, self).__init__()
 
-        print('start maestro')
         if dataset == 'maestro':
             self.data = maestro(dataroot, split, sample_rate,
                                 hop_length, timesteps, method,
                                 center, n_fft)
         else:
             raise NotImplementedError()
-        print('end maestro')
 
         self.rank = 0
         self.worker_id = 0
@@ -110,10 +108,8 @@ class Dataset(IterableDataset):
             sr = librosa.get_samplerate(entry.audio_filename)
 
             if self.method == 'mel' and not self.center and sr % self.sample_rate == 0:
-                print('stream')
                 stream = self._stream_generator(entry.audio_filename, sr)
             else:
-                print('block')
                 stream = self._block_generator(entry.audio_filename, sr, entry.num_frames)
 
             for i, block in enumerate(stream):
@@ -121,7 +117,7 @@ class Dataset(IterableDataset):
                     return
                 block = librosa.power_to_db(block, ref=np.max, top_db=80.0)
                 block = block / 80 + 1
-                yield count, entry.Index, block, i, entry.num_frames
+                yield count, entry.Index, block, (i == entry.num_frames - 1)
                 count += 1
 
     def _stream_generator(self, filename, sr):

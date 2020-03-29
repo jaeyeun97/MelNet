@@ -36,8 +36,10 @@ class DataLoader(object):
 def _collate(data):
     def collate(items):
         if type(items[0]) == int:
-            return torch.Tensor(items)
-        if type(items[0]) == torch.Tensor:
+            return torch.tensor(items, dtype=torch.int)
+        elif type(items[0]) == bool:
+            return torch.tensor(items, dtype=torch.bool)
+        elif type(items[0]) == torch.Tensor:
             return torch.stack(items)
     return tuple(collate(items) for items in zip(*data))
 
@@ -170,7 +172,7 @@ if __name__ == "__main__":
                           num_workers=FLAGS.num_workers, center=False)
         dataloader = DataLoader(dataset, FLAGS.num_workers, FLAGS.batch_size)
         for data in dataloader:
-            print(data[0], data[1].size(), data[2], data[3])
+            print(data[0], data[1].size(), data[2])
         IPython.embed()
 
 

@@ -1,58 +1,9 @@
 import torch
 import numpy as np
 
-from torch.distributions.normal import Normal
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-
-
-def mdn_loss(mu, sigma, pi, target):
-    log_probs = Normal(mu, sigma).log_prob(target.unsqueeze(-1))
-    log_probs = torch.logsumexp(log_probs + pi, -1)
-    return -log_probs.mean()
-
-
-# Should always end up with freq last
-# axis: true if time, false if freq
-def split(x, axis=True):
-    B, T, M = x.size()
-    if axis:
-        return x[:, 0::2, :], x[:, 1::2, :]
-    else:
-        return x[:, :, 0::2], x[:, :, 1::2]
-
-
-# Always interleave Freq first
-# axis false if freq true if time
-def interleave(x, y, axis=False):
-    B, T, M = x.size()
-    assert [B, T, M] == list(y.size())
-    if axis:
-        # Interleaving Time
-        new_tensor = x.new_empty((B, T*2, M))
-        new_tensor[:, 0::2, :] = x
-        new_tensor[:, 1::2, :] = y
-        return new_tensor
-    else:
-        # Interleaving Mel
-        new_tensor = x.new_empty((B, T, M*2))
-        new_tensor[:, :, 0::2] = x
-        new_tensor[:, :, 1::2] = y
-        return new_tensor
-
-
-def generate_splits(x, count):
-    """ Includes original x; outputs count pairs and 1 singleton """
-    B, T, M = x.size()
-    # yield x, x
-    # count = 3 -> Mel first
-    axis = True if count % 2 == 0 else False
-    for i in range(count, 0, -1):
-        x, y = split(x, axis)  # first = x^{<g}, second = x^g
-        yield x, y
-        axis = not axis
-    yield x
 
 
 def clip_grad(clip_size):
