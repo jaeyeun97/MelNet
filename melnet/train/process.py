@@ -1,3 +1,4 @@
+import os
 import time
 import torch
 import torch.distributed as dist
@@ -7,6 +8,8 @@ from ..data import DataLoader
 from .utils import load_model, save_model, take
 
 def train(rank, world_size, config, pipes, train_dataset, val_dataset, seed):
+    dist.init_process_group(backend='nccl', init_method='env://',
+                            world_size=world_size, rank=rank)
     torch.cuda.set_device(config.devices[rank])
     pipes = pipes[rank]
 
@@ -14,9 +17,6 @@ def train(rank, world_size, config, pipes, train_dataset, val_dataset, seed):
         torch.manual_seed(seed)
 
     torch.backends.cudnn.benchmark = True
-
-    dist.init_process_group(backend='nccl', init_method='env://',
-                            world_size=world_size, rank=rank)
 
     n_freq = config.n_mels if config.spectrogram == 'mel' else config.n_bins
     model = MelNet(config.width, n_freq, config.n_layers, config.n_mixtures, config.mode,
