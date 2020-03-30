@@ -34,10 +34,11 @@ def maestro(dataroot, split, sample_rate, hop_length, timesteps, method, center,
         total_size = (num_samples - n_fft) // hop_length + 1
     num_frames = np.ceil(total_size / timesteps).astype(int)
 
-    return pandas.DataFrame({
+    named_tuples = pandas.DataFrame({
         'audio_filename': audio_filenames,
         'num_frames': num_frames
     }).itertuples()
+    return [(e.Index, e.audio_filename, e.num_frames) for e in named_tuples]
 
 
 class Dataset(IterableDataset):
@@ -83,8 +84,8 @@ class Dataset(IterableDataset):
             # 2. worker < batchsize: each worker generates interleaved data
             chunk_size = self.batch_size * max(self.num_workers, 1) * self.world_size
         self.data = _partition(self.data, chunk_size,
-                               lambda entry: entry.num_frames)
-        self.len = min(sum(entry.num_frames for entry in chunk) for chunk in self.data)
+                               lambda entry: entry[-1])
+        self.len = min(sum(entry[-1] for entry in chunk) for chunk in self.data)
 
     def set_rank(self, rank):
         self.rank = rank
@@ -104,20 +105,20 @@ class Dataset(IterableDataset):
 
     def _data_generator(self, entries):
         count = 0
-        for entry in entries:
-            sr = librosa.get_samplerate(entry.audio_filename)
+        for index, audio_filename, num_frames in entries:
+            sr = librosa.get_samplerate(audio_filename)
 
             if self.method == 'mel' and not self.center and sr % self.sample_rate == 0:
-                stream = self._stream_generator(entry.audio_filename, sr)
+                stream = self._stream_generator(audio_filename, sr)
             else:
-                stream = self._block_generator(entry.audio_filename, sr, entry.num_frames)
+                stream = self._block_generator(audio_filename, sr, num_frames)
 
             for i, block in enumerate(stream):
                 if count >= self.len:
                     return
                 block = librosa.power_to_db(block, ref=np.max, top_db=80.0)
                 block = block / 80 + 1
-                yield count, entry.Index, block, (i == entry.num_frames - 1)
+                yield count, index, block, (i == num_frames - 1)
                 count += 1
 
     def _stream_generator(self, filename, sr):

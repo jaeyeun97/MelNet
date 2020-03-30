@@ -35,12 +35,10 @@ class DataLoader(object):
 
 def _collate(data):
     def collate(items):
-        if type(items[0]) == int:
-            return torch.tensor(items, dtype=torch.int)
-        elif type(items[0]) == bool:
-            return torch.tensor(items, dtype=torch.bool)
-        elif type(items[0]) == torch.Tensor:
+        if type(items[0]) == torch.Tensor:
             return torch.stack(items)
+        else:
+            return items
     return tuple(collate(items) for items in zip(*data))
 
 
@@ -101,7 +99,7 @@ class _ParallelDataLoaderIter(_BaseDataLoaderIter):
 
         super(_ParallelDataLoaderIter, self).__init__(dataloader, batch_size)
         self.num_workers = num_workers
-        self.queue = PriorityQueue(maxsize=num_workers * 1000)
+        self.queue = PriorityQueue(maxsize=num_workers * 500)
         # spawn thread
         self.prod_event = Event()
         self.producer = Thread(target=_dataload_thread,
@@ -112,10 +110,9 @@ class _ParallelDataLoaderIter(_BaseDataLoaderIter):
         items = []
         worker_ids = set()
         block = False
-
         while len(items) < self.batch_size:
             try:
-                item = self.queue.get(block=block)
+                item = self.queue.get(block=block, timeout=0.5)
             except Empty:
                 if self.prod_event.is_set():
                     # producer still running, items left
@@ -124,6 +121,8 @@ class _ParallelDataLoaderIter(_BaseDataLoaderIter):
                 else:
                     # producer done, queue empty
                     break
+            except TimeoutError:
+                continue
             if item[1] in worker_ids:
                 self.queue.put(item)
             else:
@@ -148,32 +147,3 @@ class _SeqDataLoaderIter(_BaseDataLoaderIter):
 
     def __next__(self):
         return [next(self.loader_iter) for i in range(self.batch_size)]
-
-
-if __name__ == "__main__":
-    import IPython
-    import numpy as np
-    from absl import app, flags
-    from dataset import Dataset
-
-    FLAGS = flags.FLAGS
-
-    flags.DEFINE_string('dataroot', '../maestro-v2.0.0', 'Path to Maestro')
-    flags.DEFINE_enum('dataset', 'maestro', ['maestro'], 'Which dataset')
-    flags.DEFINE_integer('nfft', 2048, 'Number of STFT Frequency bins')
-    flags.DEFINE_integer('timesteps', 256, 'Number of timesteps per data entry')
-    flags.DEFINE_integer('sample_rate', 22050, 'Sample Rate')
-    flags.DEFINE_integer('batch_size', 4, 'Batch Size')
-    flags.DEFINE_integer('num_workers', 8, 'Num workers')
-
-    def main(argv):
-        dataset = Dataset(FLAGS.dataset, FLAGS.dataroot, split='train',
-                          batch_size=FLAGS.batch_size, sample_rate=FLAGS.sample_rate,
-                          num_workers=FLAGS.num_workers, center=False)
-        dataloader = DataLoader(dataset, FLAGS.num_workers, FLAGS.batch_size)
-        for data in dataloader:
-            print(data[0], data[1].size(), data[2])
-        IPython.embed()
-
-
-    app.run(main)

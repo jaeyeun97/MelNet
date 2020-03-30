@@ -18,16 +18,19 @@ torch.cuda.set_device(gpu)
 model = MelNet(width, n_mels, [16, 6, 5, 4], n_mixtures)
 model.train()
 
-# x = torch.ones(batchsize, timesteps, n_mels, device=gpu)
-# c = torch.zeros(batchsize, timesteps, n_mels, device=gpu)
+print(model.state_dict())
 
-# losses = model(x, torch.IntTensor([0]), torch.tensor([False]))
-# print(losses)
-start_time = time.time()
-with torch.no_grad():
-    x = model.sample(timesteps)
-    print(x.size())
-print(f"---- {time.time() - start_time} ----")
+x = torch.ones(batchsize, timesteps, n_mels, device=gpu)
+# c = torch.zeros(batchsize, timesteps, n_mels, device=gpu)
+model.zero_grad()
+losses = model(x, [0], [False])
+print(losses)
+model.step()
+# start_time = time.time()
+# with torch.no_grad():
+#     x = model.sample(timesteps)
+#     print(x.size())
+# print(f"---- {time.time() - start_time} ----")
 
 # f_ext.train()
 # print("Input Shape:", x.shape)

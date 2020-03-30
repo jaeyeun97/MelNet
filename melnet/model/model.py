@@ -12,16 +12,17 @@ from .utils import generate_splits, interleave, mdn_loss, get_div_factors, sampl
 class MelNet(nn.Module):
     def __init__(self, width, n_freq, n_layers, n_mixtures, mode='train',
                  optimizer_cls=torch.optim.RMSprop, optim_args={'lr': 0.0001},
-                 amp_level='O1', distributed=False):
+                 grad_acc=8, amp_level='O1', distributed=False):
         super().__init__()
+        self.grad_acc = grad_acc
         self.counts = len(n_layers)
         self.t_div, self.f_div = get_div_factors(self.counts)
         self.n_initial_freq = n_freq // (2 ** self.f_div)
 
-        self.tiers = nn.ModuleList([
+        self.tiers = [
             InitialTier(width, self.n_initial_freq, n_layers[0], n_mixtures).cuda(),
             *(UpsampleTier(width, l, n_mixtures).cuda() for l in n_layers[1:])
-        ])
+        ]
 
         if mode == 'train':
             self.optimizers = [optimizer_cls(t.parameters(), **optim_args) for t in self.tiers]
@@ -36,6 +37,7 @@ class MelNet(nn.Module):
 
         if distributed:
             self.tiers = [DDP(t, delay_allreduce=True) for t in self.tiers]
+        self.tiers = nn.ModuleList(self.tiers)
 
         self.streams = [torch.cuda.Stream() for _ in range(self.counts)]
 
@@ -84,16 +86,16 @@ class MelNet(nn.Module):
                     prev, curr = splits[i]
                     mu, sigma, pi = self.tiers[i](prev)
 
-                loss = mdn_loss(mu, sigma, pi, curr)
+                loss = mdn_loss(mu, sigma, pi, curr) / self.grad_acc
 
                 if self.training:
                     with amp.scale_loss(loss, self.optimizers[i]) as scaled_loss:
                         scaled_loss.backward()
 
-                losses.append(loss)
+                losses.append(loss.detach().cpu())
 
         self.sync_streams()
-        return losses
+        return torch.stack(losses)
 
     def sample(self, timesteps):
         self.eval()
