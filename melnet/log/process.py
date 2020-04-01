@@ -6,9 +6,8 @@ def logging_process(run_dir, proc_num, event, pipes, **audio_kwargs):
     if proc_num != 0:
         return
 
-    print(event)
-    print(event.is_set())
     event.wait()
+    print(event)
     print('AWAKE')
     logger = Logger(run_dir)
     pipes = [(r, n, p) for r, v in pipes.items() for n, p in v.items()]
@@ -37,7 +36,6 @@ def logging_process(run_dir, proc_num, event, pipes, **audio_kwargs):
 
     while event.is_set():
         for rank, name, pipe in pipes:
-            print(pipe.poll())
             if pipe.poll():
                 content = pipe.recv()
                 if name == 'train_loss':

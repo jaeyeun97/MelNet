@@ -2,7 +2,6 @@ import os
 import torch
 import numpy as np
 import torch.multiprocessing as mp
-mp.set_sharing_strategy('file_system')
 
 from .config import get_config
 from .data import get_dataset
@@ -59,9 +58,12 @@ class Executor(object):
 
     def spawn_logger(self):
         log_proc_fn = get_log_proc_fn(self.config)
-        self.logging_ctx = mp.spawn(log_proc_fn, args=(self.log_event, self.log_p),
-                                    join=False, nprocs=1)
         self.log_event.set()
+        # self.logging_ctx = mp.spawn(log_proc_fn, args=(self.log_event, self.log_p),
+        #                             join=True, nprocs=1)
+        # self.logging_ctx.join()
+        log_proc_fn(0, self.log_event, self.log_p)
+        print(self.log_event.is_set())
         print("Log Event Set")
 
     def run_trainer(self):
