@@ -5,7 +5,8 @@ import torch.multiprocessing as mp
 
 from .config import get_config
 from .data import get_dataset
-from .log import get_log_proc_fn
+# from .log import get_log_proc_fn
+from .log.process import logging_process
 from .train import train
 
 
@@ -17,9 +18,11 @@ class Executor(object):
         self.world_size = len(self.devices)
 
         self.prep_env()
+        self.ctx = mp.get_context('spawn')
         if self.config.logging:
             self.prep_pipes()
         self.prep_datasets()
+        self.logging_ctx = None
 
     def prep_env(self):
         os.environ['MASTER_ADDR'] = 'localhost'
@@ -45,8 +48,7 @@ class Executor(object):
             self.worker_p[rank] = dict()
             self.log_p[rank] = dict()
             for pt in self.pipe_types:
-                self.log_p[rank][pt], self.worker_p[rank][pt] = mp.Pipe(False)
-        self.log_event = mp.Event()
+                self.log_p[rank][pt], self.worker_p[rank][pt] = self.ctx.Pipe(False)
 
     def prep_datasets(self):
         # No dataset is needed for sampling (yet).
@@ -56,27 +58,17 @@ class Executor(object):
         elif self.config.mode == 'test':
             self.test_dataset = get_dataset(self.config, 'test', self.world_size)
 
-    def spawn_logger(self):
-        log_proc_fn = get_log_proc_fn(self.config)
-        self.log_event.set()
-        # self.logging_ctx = mp.spawn(log_proc_fn, args=(self.log_event, self.log_p),
-        #                             join=True, nprocs=1)
-        # self.logging_ctx.join()
-        log_proc_fn(0, self.log_event, self.log_p)
-        print(self.log_event.is_set())
-        print("Log Event Set")
+    def spawn_logger(self, event):
+        return mp.spawn(logging_process,
+                        args=(self.config, event, self.log_p),
+                        join=False, nprocs=1)
 
     def run_trainer(self):
         seed = np.random.randint(np.iinfo(np.int).max)
-        # if self.world_size > 1:
         mp.spawn(train,
                  args=(self.world_size, self.config, self.worker_p,
                        self.train_dataset, self.val_dataset, seed),
                  nprocs=self.world_size)
-        # else:
-        #     train(0, self.world_size, self.config, self.worker_p,
-        #           self.train_dataset, self.val_dataset, seed)
-
 
     def run_sampler(self):
         raise NotImplementedError
@@ -86,7 +78,9 @@ class Executor(object):
 
     def run(self):
         if self.config.logging:
-            self.spawn_logger()
+            log_event = self.ctx.Event()
+            log_ctx = self.spawn_logger(log_event)
+            log_event.set()
 
         if self.config.mode == 'train':
             self.run_trainer()
@@ -96,5 +90,5 @@ class Executor(object):
             self.run_tester()
 
         if self.config.logging:
-            self.logging.clear()
-            self.logging_ctx.join()
+            log_event.clear()
+            log_ctx.join()

@@ -2,16 +2,12 @@ from .utils import spec_to_image, spec_to_audio
 from .logger import Logger
 
 
-def logging_process(run_dir, proc_num, event, pipes, **audio_kwargs):
+def logging_process(proc_num, config, event, pipes):
     if proc_num != 0:
         return
 
-    event.wait()
-    print(event)
-    print('AWAKE')
-    logger = Logger(run_dir)
+    logger = Logger(config.run_dir)
     pipes = [(r, n, p) for r, v in pipes.items() for n, p in v.items()]
-    print(pipes)
 
     def add_loss(name, iteration, losses):
         print(name, iteration, losses)
@@ -24,20 +20,22 @@ def logging_process(run_dir, proc_num, event, pipes, **audio_kwargs):
 
         def audio_callback(res):
             logger.add_audio(f'audio/{rank}', res, iteration,
-                             sr=audio_kwargs['sample_rate'])
+                             sr=config.sample_rate)
 
         if len(spec.size()) > 2:
             spec = spec[0, :, :]
         spec = spec.cpu().transpose(0, 1).numpy()
         logger.add_async(spec_to_image, image_callback,
-                         spec, **audio_kwargs)
+                         spec, config)
         logger.add_async(spec_to_audio, audio_callback,
-                         spec, **audio_kwargs)
+                         spec, config)
 
+    event.wait()
     while event.is_set():
         for rank, name, pipe in pipes:
             if pipe.poll():
                 content = pipe.recv()
+                print(content)
                 if name == 'train_loss':
                     add_loss('loss/train', *content)
                 elif name == 'val_loss':
