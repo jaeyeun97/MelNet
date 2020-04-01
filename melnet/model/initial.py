@@ -53,7 +53,7 @@ class TimeDelayedStack(nn.Module):
             if flag_lasts[i]:
                 del self.hidden_states[entries[i]]
             else:
-                self.hidden_states[entries[i]] = hidden_state[i, :, :]
+                self.hidden_states[entries[i]] = hidden_state[i, :, :].clone().detach()
 
         return x_time # B, T, M, 3D
 
@@ -74,7 +74,7 @@ class CentralizedStack(nn.Module):
             if flag_lasts[i]:
                 del self.hidden_states[entries[i]]
             else:
-                self.hidden_states[entries[i]] = h[0, i, :]
+                self.hidden_states[entries[i]] = h[0, i, :].clone().detach()
 
         return x # size: B, T, D
 

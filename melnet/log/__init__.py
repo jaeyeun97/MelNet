@@ -5,7 +5,7 @@ from functools import partial
 from .process import logging_process
 
 def get_log_proc_fn(config):
-    return partial(debug_wrapper, config.run_dir,
+    return partial(logging_process, config.run_dir,
                    spec_type=config.spectrogram,
                    hop_length=config.hop_length,
                    sample_rate=config.sample_rate,

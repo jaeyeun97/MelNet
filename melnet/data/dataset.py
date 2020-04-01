@@ -118,7 +118,7 @@ class Dataset(IterableDataset):
                     return
                 block = librosa.power_to_db(block, ref=np.max, top_db=80.0)
                 block = block / 80 + 1
-                yield count, index, block, (i == num_frames - 1)
+                yield count, index, np.transpose(block), (i == num_frames - 1)
                 count += 1
 
     def _stream_generator(self, filename, sr):

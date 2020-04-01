@@ -50,14 +50,12 @@ class MelNet(nn.Module):
             for i in range(self.counts):
                 with torch.cuda.stream(self.streams[i]):
                     self.optimizers[i].zero_grad()
-            self.sync_streams()
 
     def step(self):
         if self.optimizers:
             for i in range(self.counts):
                 with torch.cuda.stream(self.streams[i]):
                     self.optimizers[i].step()
-            self.sync_streams()
 
     def optimizer_state_dict(self):
         if self.optimizers:
@@ -71,9 +69,8 @@ class MelNet(nn.Module):
                     for state in self.optimizers[i].state.values():
                         for k, v in state.items():
                             state[k] = v.cuda()
-            self.sync_streams()
 
-    def forward(self, x, entries, flag_lasts):
+    def forward(self, x, entries, flag_lasts, step_iter=False):
         splits = generate_splits(x, self.counts)
         losses = []
 
@@ -89,12 +86,16 @@ class MelNet(nn.Module):
                 loss = mdn_loss(mu, sigma, pi, curr) / self.grad_acc
 
                 if self.training:
-                    with amp.scale_loss(loss, self.optimizers[i]) as scaled_loss:
+                    with amp.scale_loss(loss, self.optimizers[i],
+                                        delay_unscale=not step_iter) as scaled_loss:
                         scaled_loss.backward()
 
-                losses.append(loss.detach().cpu())
+                    if step_iter:
+                        self.optimizers[i].step()
+                        self.optimizers[i].zero_grad()
 
-        self.sync_streams()
+                losses.append(loss.clone().detach())
+
         return torch.stack(losses)
 
     def sample(self, timesteps):

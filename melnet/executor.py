@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 
 from .config import get_config
 from .data import get_dataset
@@ -46,7 +47,7 @@ class Executor(object):
             self.log_p[rank] = dict()
             for pt in self.pipe_types:
                 self.log_p[rank][pt], self.worker_p[rank][pt] = mp.Pipe(False)
-        self.logging = mp.Event()
+        self.log_event = mp.Event()
 
     def prep_datasets(self):
         # No dataset is needed for sampling (yet).
@@ -57,20 +58,28 @@ class Executor(object):
             self.test_dataset = get_dataset(self.config, 'test', self.world_size)
 
     def spawn_logger(self):
-        self.logging.set()
         log_proc_fn = get_log_proc_fn(self.config)
-        self.logging_ctx = mp.spawn(log_proc_fn, args=(self.logging, self.log_p),
+        self.logging_ctx = mp.spawn(log_proc_fn, args=(self.log_event, self.log_p),
                                     join=False, nprocs=1)
+        self.log_event.set()
+        print("Log Event Set")
 
-    def spawn_trainer(self):
+    def run_trainer(self):
         seed = np.random.randint(np.iinfo(np.int).max)
-        mp.spawn(train, args=(self.world_size, self.config, self.worker_p,
-                              self.train_dataset, self.val_dataset, seed), nprocs=self.world_size)
+        # if self.world_size > 1:
+        mp.spawn(train,
+                 args=(self.world_size, self.config, self.worker_p,
+                       self.train_dataset, self.val_dataset, seed),
+                 nprocs=self.world_size)
+        # else:
+        #     train(0, self.world_size, self.config, self.worker_p,
+        #           self.train_dataset, self.val_dataset, seed)
 
-    def spawn_sampler(self):
+
+    def run_sampler(self):
         raise NotImplementedError
 
-    def spawn_tester(self):
+    def run_tester(self):
         raise NotImplementedError
 
     def run(self):
@@ -78,11 +87,11 @@ class Executor(object):
             self.spawn_logger()
 
         if self.config.mode == 'train':
-            self.spawn_trainer()
+            self.run_trainer()
         elif self.config.mode == 'sample':
-            self.spawn_sampler()
+            self.run_sampler()
         elif self.config.mode == 'test':
-            self.spawn_tester()
+            self.run_tester()
 
         if self.config.logging:
             self.logging.clear()

@@ -1,5 +1,6 @@
 import torch
 
+from copy import deepcopy
 from threading import Thread, Event
 from queue import PriorityQueue, Empty
 
@@ -88,7 +89,7 @@ def _dataload_thread(dataloader, pq, event):
     event.set()
     for item in dataloader:
         # add to priority queue based on item count
-        pq.put(item)
+        pq.put(deepcopy(item))
     event.clear()
 
 
