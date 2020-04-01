@@ -5,8 +5,7 @@ import torch.multiprocessing as mp
 
 from .config import get_config
 from .data import get_dataset
-# from .log import get_log_proc_fn
-from .log.process import logging_process
+from .log import logging_process
 from .train import train
 
 

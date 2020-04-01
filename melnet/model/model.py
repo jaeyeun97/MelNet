@@ -54,7 +54,7 @@ class MelNet(nn.Module):
     def step(self):
         if self.optimizers:
             for i in range(self.counts):
-                with torch.cuda.stream(self.streams[i]):
+                # with torch.cuda.stream(self.streams[i]):
                     self.optimizers[i].step()
 
     def optimizer_state_dict(self):
@@ -64,7 +64,7 @@ class MelNet(nn.Module):
     def optimizer_load_state_dict(self, state_dicts):
         if self.optimizers:
             for i in range(self.counts):
-                with torch.cuda.stream(self.streams[i]):
+                # with torch.cuda.stream(self.streams[i]):
                     self.optimizers[i].load_state_dict(state_dicts[i])
                     for state in self.optimizers[i].state.values():
                         for k, v in state.items():
@@ -75,7 +75,7 @@ class MelNet(nn.Module):
         losses = []
 
         for i in range(self.counts):
-            with torch.cuda.stream(self.streams[i]):
+            # with torch.cuda.stream(self.streams[i]):
                 if i == 0:
                     curr = splits[i]
                     mu, sigma, pi = self.tiers[i](curr, entries, flag_lasts)

@@ -16,25 +16,25 @@ def figure_to_image(fig):
     return np.moveaxis(image_hwc, source=2, destination=0)
 
 
-def spec_to_image(spec, **kwargs):
+def spec_to_image(spec, config):
     fig = Figure()
     ax = fig.gca()
     librosa.display.specshow(spec, ax=ax, x_axis='time',
-                             y_axis=kwargs['spec_type'],
-                             hop_length=kwargs['hop_length'],
-                             sr=kwargs['sample_rate'])
+                             y_axis=config.spec_type,
+                             hop_length=config.hop_length,
+                             sr=config.sample_rate)
     return figure_to_image(fig)
 
-def spec_to_audio(spec, **kwargs):
-    if kwargs['spec_type'] == 'mel':
+def spec_to_audio(spec, config):
+    if config.spec_type == 'mel':
         return librosa.feature.inverse.mel_to_audio(spec,
-                                                    sr=kwargs['sample_rate'],
-                                                    n_fft=kwargs['n_fft'],
-                                                    n_mels=kwargs['n_mels'],
-                                                    hop_length=kwargs['hop_length'],
-                                                    center=kwargs['center'])
-    elif kwargs['spec_type'] == 'cqt':
+                                                    sr=config.sample_rate,
+                                                    n_fft=config.n_fft,
+                                                    n_mels=config.n_mels,
+                                                    hop_length=config.hop_length,
+                                                    center=config.center)
+    elif config.spec_type == 'cqt':
         return librosa.griffinlim_cqt(spec,
-                                      sr=kwargs['sample_rate'],
-                                      hop_length=kwargs['hop_length'],
-                                      bins_per_octave=kwargs['bins_per_octave'])
+                                      sr=config.sample_rate,
+                                      hop_length=config.hop_length,
+                                      bins_per_octave=config.bins_per_octave)

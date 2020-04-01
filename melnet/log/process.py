@@ -10,7 +10,6 @@ def logging_process(proc_num, config, event, pipes):
     pipes = [(r, n, p) for r, v in pipes.items() for n, p in v.items()]
 
     def add_loss(name, iteration, losses):
-        print(name, iteration, losses)
         for i, loss in enumerate(losses):
             logger.add_scalar(f'name/{i}', loss, iteration)
 
@@ -35,7 +34,6 @@ def logging_process(proc_num, config, event, pipes):
         for rank, name, pipe in pipes:
             if pipe.poll():
                 content = pipe.recv()
-                print(content)
                 if name == 'train_loss':
                     add_loss('loss/train', *content)
                 elif name == 'val_loss':

@@ -143,7 +143,7 @@ class InitialTier(nn.Module):
     def forward(self, x, entries, flag_lasts, c=None):
         # x: [B, T, M]
         # Shift the inputs right for time-delay inputs
-        x_time = F.pad(x, [0, 0, 1, -1, 0, 0])
+        x_time = F.pad(x, [0, 0, 1, -1])
         if self.central:
             x_central = self.central_input(x_time)
         else:
@@ -154,7 +154,7 @@ class InitialTier(nn.Module):
         x_time = self.time_input(x_time)
 
         # Shift the inputs up for freq-delay inputs
-        x_freq = F.pad(x, [0, 0, 0, 0, 1, -1]).unsqueeze(-1)
+        x_freq = F.pad(x, [1, -1]).unsqueeze(-1)
         x_freq = self.freq_input(x_freq)
 
         if self.cond:
