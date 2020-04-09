@@ -29,14 +29,19 @@ def load_model(config, model):
     else:
         raise ValueError('Specify an iter or epoch to load from')
 
-    checkpoint = torch.load(os.path.join(config.checkpoint_dir, f'{name}.pth'),
-                            map_location=torch.cuda.current_device())
+    if config.load_from is None:
+        path = config.checkpoint_dir
+    else:
+        path = os.path.join(os.path.dirname(config.checkpoint_dir.rstrip('/')), config.load_from)
+
+    path = os.path.join(path, f'{name}.pth')
+    checkpoint = torch.load(path, map_location=torch.device('cuda', torch.cuda.current_device()))
     time = str(datetime.fromtimestamp(checkpoint['timestamp']))
     print(f"Loading Epoch {checkpoint['epoch']} from {time}")
     model.load_state_dict(checkpoint['model'])
-    model.optimizer_load_state_dict(checkpoint['optimizer_state_dict'])
+    model.optimizer_load_state_dict(checkpoint['optimizer'])
     amp.load_state_dict(checkpoint['amp'])
-    return checkpoint['epoch'], checkpoint['iteration']
+    return checkpoint['epoch'] + 1, checkpoint['iteration'] + 1
 
 
 def take(n, iterator):

@@ -18,8 +18,7 @@ class Executor(object):
 
         self.prep_env()
         self.ctx = mp.get_context('spawn')
-        if self.config.logging:
-            self.prep_pipes()
+        self.prep_pipes()
         self.prep_datasets()
         self.logging_ctx = None
 
@@ -41,19 +40,24 @@ class Executor(object):
             return ['spectrogram']
 
     def prep_pipes(self):
-        self.log_p = dict()
-        self.worker_p = dict()
-        for rank in range(self.world_size):
-            self.worker_p[rank] = dict()
-            self.log_p[rank] = dict()
-            for pt in self.pipe_types:
-                self.log_p[rank][pt], self.worker_p[rank][pt] = self.ctx.Pipe(False)
+        if self.config.logging:
+            self.log_p = dict()
+            self.worker_p = dict()
+            for rank in range(self.world_size):
+                self.worker_p[rank] = dict()
+                self.log_p[rank] = dict()
+                for pt in self.pipe_types:
+                    self.log_p[rank][pt], self.worker_p[rank][pt] = self.ctx.Pipe(False)
+        else:
+            self.worker_p = None
 
     def prep_datasets(self):
         # No dataset is needed for sampling (yet).
         if self.config.mode == 'train':
             self.train_dataset = get_dataset(self.config, 'train', self.world_size)
             self.val_dataset = get_dataset(self.config, 'validation', self.world_size)
+            print(f'Train Set Length: {self.train_dataset.len}')
+            print(f'Validation Set Length: {self.val_dataset.len}')
         elif self.config.mode == 'test':
             self.test_dataset = get_dataset(self.config, 'test', self.world_size)
 
@@ -64,10 +68,14 @@ class Executor(object):
 
     def run_trainer(self):
         seed = np.random.randint(np.iinfo(np.int).max)
-        mp.spawn(train,
-                 args=(self.world_size, self.config, self.worker_p,
-                       self.train_dataset, self.val_dataset, seed),
-                 nprocs=self.world_size)
+        if self.world_size > 1:
+            mp.spawn(train,
+                     args=(self.world_size, self.config, self.worker_p,
+                           self.train_dataset, self.val_dataset, seed),
+                     nprocs=self.world_size)
+        else:
+            train(0, self.world_size, self.config, self.worker_p,
+                  self.train_dataset, self.val_dataset, seed)
 
     def run_sampler(self):
         raise NotImplementedError

@@ -22,11 +22,15 @@ class TimeDelayedStack(nn.Module):
         self.bi_freq_rnn = nn.GRU(width, width, bidirectional=True, batch_first=True)
         self.time_rnn = nn.GRU(width, width, batch_first=True)
         self.hidden_states = dict()
+        # self.h = None
 
     def forward(self, x_time, entries, flag_lasts):
 
         # Batch, Timesteps, Mels, Dims
         B, T, M, D = x_time.size()
+
+        # if self.h is None:
+        #     self.h = x_time.new_empty(1, B, M, D)
 
         # Collapse the first two axes
         time_input = x_time.transpose(1, 2).contiguous().view(-1, T, D)  # [B*M, T, D]
@@ -36,14 +40,16 @@ class TimeDelayedStack(nn.Module):
         x_2_and_3, _ = self.bi_freq_rnn(freq_input)
 
         # Time RNN 
-        hidden_state = torch.stack([self.hidden_states.setdefault(entries[i], time_input.new_zeros(M, D))
-                                    for i in range(B)], dim=0) # (B, M, D)
-        hidden_state = hidden_state.view(B * M, D).unsqueeze(0) # (1, B * M, D)
-        x_1, hidden_state = self.time_rnn(time_input)
+        h = torch.stack([self.hidden_states.setdefault(entries[i], time_input.new_zeros(M, D))
+                         for i in range(B)], dim=0).unsqueeze(0) # (B, M, D)
+        # for i in range(B):
+        #     self.h[0, i, :, :] = self.hidden_states[entries[i]] if entries[i] in self.hidden_states else 0
+
+        x_1, h = self.time_rnn(time_input, h.view(1, B * M, D))
 
         # Reshape the first two axes back to original
         x_1 = x_1.view(B, M, T, D).transpose(1, 2)
-        hidden_state = hidden_state.squeeze(0).view(B, M, D)
+        h = h.view(1, B, M, D)
         x_2_and_3 = x_2_and_3.view(B, T, M, 2 * D)
 
         # And concatenate for output
@@ -53,7 +59,7 @@ class TimeDelayedStack(nn.Module):
             if flag_lasts[i]:
                 del self.hidden_states[entries[i]]
             else:
-                self.hidden_states[entries[i]] = hidden_state[i, :, :].clone().detach()
+                self.hidden_states[entries[i]] = h[0, i, :, :].clone().detach()
 
         return x_time # B, T, M, 3D
 
@@ -63,11 +69,18 @@ class CentralizedStack(nn.Module):
         super().__init__()
         self.rnn = nn.GRU(width, width, batch_first=True)
         self.hidden_states = dict()
+        self.h = None
 
     def forward(self, x, entries, flag_lasts):
         B, T, D = x.size()
         h = torch.stack([self.hidden_states.setdefault(entries[i], x.new_zeros(D))
                          for i in range(B)], dim=0).unsqueeze(0) # (1, B, D)
+        # if self.h is None:
+        #     self.h = x.new_empty(1, B, D)
+
+        # for i in range(B):
+        #     self.h[0, i, :] = self.hidden_states[entries[i]] if entries[i] in self.hidden_states else 0
+
         x, h = self.rnn(x, h)
 
         for i in range(B):
@@ -173,7 +186,9 @@ class InitialTier(nn.Module):
         x = x.view(B, T, M, -1, 3)
 
         mu = x[:, :, :, :, 0]
-        sigma = torch.exp(x[:, :, :, :, 1])
+        # sigma = F.softplus(x[:, :, :, :, 1])
+        # sigma = torch.exp(x[:, :, :, :, 1])
+        sigma = F.elu(x[:, :, :, :, 1]) + 1
         pi = F.log_softmax(x[:, :, :, :, 2], dim=3)
 
         return mu, sigma, pi

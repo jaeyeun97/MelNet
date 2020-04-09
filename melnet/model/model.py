@@ -12,9 +12,11 @@ from .utils import generate_splits, interleave, mdn_loss, get_div_factors, sampl
 class MelNet(nn.Module):
     def __init__(self, width, n_freq, n_layers, n_mixtures, mode='train',
                  optimizer_cls=torch.optim.RMSprop, optim_args={'lr': 0.0001},
-                 grad_acc=8, amp_level='O1', distributed=False):
+                 grad_acc=8, grad_clip=1, amp_level='O1', profile=False, distributed=False):
         super().__init__()
         self.grad_acc = grad_acc
+        self.grad_clip = grad_clip
+        self.profile = profile
         self.counts = len(n_layers)
         self.t_div, self.f_div = get_div_factors(self.counts)
         self.n_initial_freq = n_freq // (2 ** self.f_div)
@@ -48,7 +50,7 @@ class MelNet(nn.Module):
     def zero_grad(self):
         if self.optimizers:
             for i in range(self.counts):
-                with torch.cuda.stream(self.streams[i]):
+                # with torch.cuda.stream(self.streams[i]):
                     self.optimizers[i].zero_grad()
 
     def step(self):
@@ -76,6 +78,8 @@ class MelNet(nn.Module):
 
         for i in range(self.counts):
             # with torch.cuda.stream(self.streams[i]):
+                if self.profile: torch.cuda.nvtx.range_push(f'Tier {i}: forward')
+
                 if i == 0:
                     curr = splits[i]
                     mu, sigma, pi = self.tiers[i](curr, entries, flag_lasts)
@@ -85,18 +89,30 @@ class MelNet(nn.Module):
 
                 loss = mdn_loss(mu, sigma, pi, curr) / self.grad_acc
 
+                if self.profile: torch.cuda.nvtx.range_pop()
+
                 if self.training:
-                    with amp.scale_loss(loss, self.optimizers[i],
-                                        delay_unscale=not step_iter) as scaled_loss:
+                    if self.profile: torch.cuda.nvtx.range_push(f'Tier {i}: backward')
+
+                    with amp.scale_loss(loss, self.optimizers[i]) as scaled_loss:
                         scaled_loss.backward()
 
+                    if self.profile: torch.cuda.nvtx.range_pop()
+
                     if step_iter:
+                        if self.profile: torch.cuda.nvtx.range_push(f'Tier {i}: optimizer.step()')
+
+                        if self.grad_clip > 0:
+                            torch.nn.utils.clip_grad_norm_(amp.master_params(self.optimizers[i]),
+                                                           self.grad_clip)
                         self.optimizers[i].step()
                         self.optimizers[i].zero_grad()
 
-                losses.append(loss.clone().detach())
+                        if self.profile: torch.cuda.nvtx.range_pop()
 
-        return torch.stack(losses)
+                losses.append(loss.detach_().to('cpu', non_blocking=True, copy=True))
+
+        return losses
 
     def sample(self, timesteps):
         self.eval()

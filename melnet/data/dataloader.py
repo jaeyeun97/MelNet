@@ -75,6 +75,9 @@ class _DataPipeline(object):
             indicies, block, *rest = self.next_item
             self.next_item = (indicies, block.cuda(non_blocking=True), *rest)
 
+    def __del__(self):
+        del self.loader_iter
+
 
 class _BaseDataLoaderIter(object):
     def __init__(self, dataloader, batch_size):
@@ -85,12 +88,19 @@ class _BaseDataLoaderIter(object):
         return self
 
 
-def _dataload_thread(dataloader, pq, event):
+def _dataload_thread(data_iter, pq, event):
     event.set()
-    for item in dataloader:
+    while event.is_set():
         # add to priority queue based on item count
-        pq.put(deepcopy(item))
+        try:
+            item = next(data_iter)
+        except StopIteration:
+            event.clear()
+            break
+        else:
+            pq.put(deepcopy(item))
     event.clear()
+    print("Done")
 
 
 class _ParallelDataLoaderIter(_BaseDataLoaderIter):
@@ -104,7 +114,7 @@ class _ParallelDataLoaderIter(_BaseDataLoaderIter):
         # spawn thread
         self.prod_event = Event()
         self.producer = Thread(target=_dataload_thread,
-                               args=(self.dataloader, self.queue, self.prod_event))
+                               args=(iter(self.dataloader), self.queue, self.prod_event))
         self.producer.start()
 
     def __next__(self):
@@ -138,7 +148,9 @@ class _ParallelDataLoaderIter(_BaseDataLoaderIter):
             return items
 
     def __del__(self):
+        self.prod_event.clear()
         self.producer.join()
+        print("Joined")
 
 
 class _SeqDataLoaderIter(_BaseDataLoaderIter):

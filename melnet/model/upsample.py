@@ -52,7 +52,9 @@ class UpsampleTier(nn.Module):
         x = x.view(B, T, M, -1, 3)
 
         mu = x[:, :, :, :, 0]
-        sigma = torch.exp(x[:, :, :, :, 1])
+        # sigma = F.softplus(x[:, :, :, :, 1])
+        # sigma = torch.exp(x[:, :, :, :, 1])
+        sigma = F.elu(x[:, :, :, :, 1]) + 1
         pi = F.log_softmax(x[:, :, :, :, 2], dim=3)
 
         return mu, sigma, pi
