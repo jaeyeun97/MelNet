@@ -22,15 +22,11 @@ class TimeDelayedStack(nn.Module):
         self.bi_freq_rnn = nn.GRU(width, width, bidirectional=True, batch_first=True)
         self.time_rnn = nn.GRU(width, width, batch_first=True)
         self.hidden_states = dict()
-        # self.h = None
 
     def forward(self, x_time, entries, flag_lasts):
 
         # Batch, Timesteps, Mels, Dims
         B, T, M, D = x_time.size()
-
-        # if self.h is None:
-        #     self.h = x_time.new_empty(1, B, M, D)
 
         # Collapse the first two axes
         time_input = x_time.transpose(1, 2).contiguous().view(-1, T, D)  # [B*M, T, D]
@@ -41,11 +37,9 @@ class TimeDelayedStack(nn.Module):
 
         # Time RNN 
         h = torch.stack([self.hidden_states.setdefault(entries[i], time_input.new_zeros(M, D))
-                         for i in range(B)], dim=0).unsqueeze(0) # (B, M, D)
-        # for i in range(B):
-        #     self.h[0, i, :, :] = self.hidden_states[entries[i]] if entries[i] in self.hidden_states else 0
+                         for i in range(B)], dim=0) # (B, M, D)
 
-        x_1, h = self.time_rnn(time_input, h.view(1, B * M, D))
+        x_1, h = self.time_rnn(time_input, h.unsqueeze(0).view(1, B * M, D))
 
         # Reshape the first two axes back to original
         x_1 = x_1.view(B, M, T, D).transpose(1, 2)
@@ -69,18 +63,11 @@ class CentralizedStack(nn.Module):
         super().__init__()
         self.rnn = nn.GRU(width, width, batch_first=True)
         self.hidden_states = dict()
-        self.h = None
 
     def forward(self, x, entries, flag_lasts):
         B, T, D = x.size()
         h = torch.stack([self.hidden_states.setdefault(entries[i], x.new_zeros(D))
                          for i in range(B)], dim=0).unsqueeze(0) # (1, B, D)
-        # if self.h is None:
-        #     self.h = x.new_empty(1, B, D)
-
-        # for i in range(B):
-        #     self.h[0, i, :] = self.hidden_states[entries[i]] if entries[i] in self.hidden_states else 0
-
         x, h = self.rnn(x, h)
 
         for i in range(B):
